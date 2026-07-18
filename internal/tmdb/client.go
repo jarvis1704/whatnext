@@ -33,6 +33,30 @@ func New(key string) (*Client, error) {
 	}, nil
 }
 
+// ErrBadKey signals the API rejected the key (HTTP 401).
+var ErrBadKey = fmt.Errorf("TMDb rejected the API key (401)")
+
+// Health verifies the key and reachability by hitting /configuration. It
+// returns the round-trip latency, ErrBadKey on 401, or the transport error.
+func (c *Client) Health() (time.Duration, error) {
+	q := url.Values{"api_key": {c.key}}
+	start := time.Now()
+	resp, err := c.http.Get(base + "/configuration?" + q.Encode())
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	lat := time.Since(start)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return lat, nil
+	case http.StatusUnauthorized:
+		return lat, ErrBadKey
+	default:
+		return lat, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+}
+
 // Result is the enrichment payload for a single title.
 type Result struct {
 	TMDbID      int

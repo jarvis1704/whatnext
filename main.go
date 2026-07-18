@@ -7,6 +7,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 
@@ -54,6 +55,8 @@ func main() {
 		cmdWatched(args[1:])
 	case "refresh":
 		cmdRefresh(args[1:])
+	case "doctor":
+		cmdDoctor(args[1:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -73,6 +76,7 @@ func usage() {
   whatnext list [--watched]         print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
   whatnext refresh                  retry TMDb enrichment for unenriched titles
+  whatnext doctor                   check key, DNS, TMDb reachability & pool
 
 %s
   --genre <name>        filter to a single genre
@@ -183,6 +187,123 @@ func runEnrichment(data *store.Data, verb string) {
 var spin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
 func spinnerFrame(i int) string { return c(aGold, spin[i%len(spin)]) }
+
+// ---- doctor ----
+
+const tmdbHost = "api.themoviedb.org"
+
+// cmdDoctor runs a one-shot health check: API key, DNS, TMDb reachability, and
+// pool stats. Exits non-zero if a hard problem (bad/missing key, unreachable
+// API) is found, so it can gate scripts.
+func cmdDoctor(_ []string) {
+	fmt.Println(c(aBold+aGold, "whatnext doctor"))
+	fmt.Println()
+	ok := true
+
+	// 1. API key presence (never print the value).
+	key := os.Getenv("TMDB_API_KEY")
+	if key == "" {
+		checkln(false, "API key", "TMDB_API_KEY not set — enrichment disabled")
+		ok = false
+	} else {
+		checkln(true, "API key", fmt.Sprintf("set (%d chars)", len(key)))
+	}
+
+	// 2. DNS — resolve the API host and flag ISP block-page hijacking.
+	ips, derr := net.LookupHost(tmdbHost)
+	switch {
+	case derr != nil:
+		checkln(false, "DNS", "lookup failed: "+derr.Error())
+		ok = false
+	case isBlockPage(ips):
+		warnln("DNS", fmt.Sprintf("%s → %s (looks like an ISP block page)", tmdbHost, strings.Join(ips, ", ")))
+		fmt.Println(c(aDim, "            switch resolver to 1.1.1.1 / 8.8.8.8 — see README"))
+		ok = false
+	default:
+		checkln(true, "DNS", fmt.Sprintf("%s → %s", tmdbHost, ips[0]))
+	}
+
+	// 3. TMDb reachability + key validity.
+	if key != "" {
+		client, _ := tmdb.New(key)
+		lat, herr := client.Health()
+		switch {
+		case herr == nil:
+			checkln(true, "TMDb API", fmt.Sprintf("reachable, key valid (%dms)", lat.Milliseconds()))
+		case herr == tmdb.ErrBadKey:
+			checkln(false, "TMDb API", "reachable but key rejected (401) — wrong key")
+			ok = false
+		default:
+			checkln(false, "TMDb API", "unreachable: "+shortDoctorErr(herr))
+			ok = false
+		}
+	} else {
+		fmt.Printf("  %s %-12s %s\n", c(aDim, "–"), "TMDb API", c(aDim, "skipped (no key)"))
+	}
+
+	// 4. Pool stats (always informational).
+	if data, err := store.Load(); err == nil {
+		total, watched, unenriched := 0, 0, 0
+		for _, t := range data.Titles {
+			total++
+			if t.Watched {
+				watched++
+			}
+			if !t.Enriched {
+				unenriched++
+			}
+		}
+		home, _ := os.UserHomeDir()
+		checkln(true, "Pool", fmt.Sprintf("%d titles · %d watched · %d unenriched  %s",
+			total, watched, unenriched, c(aDim, home+"/.whatnext")))
+	} else {
+		warnln("Pool", "could not read pool: "+err.Error())
+	}
+
+	fmt.Println()
+	if ok {
+		fmt.Println(c(aGreen, "✓ all good — run: whatnext refresh"))
+		return
+	}
+	fmt.Println(c(aAmber, "⚠ issues above — fix, then re-run: whatnext doctor"))
+	os.Exit(1)
+}
+
+func checkln(ok bool, label, detail string) {
+	mark := c(aGreen, "✓")
+	if !ok {
+		mark = c(aRed, "✗")
+	}
+	fmt.Printf("  %s %-12s %s\n", mark, label, detail)
+}
+
+func warnln(label, detail string) {
+	fmt.Printf("  %s %-12s %s\n", c(aAmber, "⚠"), label, c(aAmber, detail))
+}
+
+// isBlockPage reports whether the resolved IPs look like an ISP DNS-hijack
+// block page rather than TMDb's real CloudFront addresses.
+func isBlockPage(ips []string) bool {
+	for _, ip := range ips {
+		// Real TMDb is CloudFront (3.x / 13.x / 18.x …). Indian ISP block
+		// pages land on 49.44.x.x and similar single-host ranges.
+		if strings.HasPrefix(ip, "49.44.") || strings.HasPrefix(ip, "49.45.") {
+			return true
+		}
+	}
+	return false
+}
+
+func shortDoctorErr(err error) string {
+	s := err.Error()
+	if strings.Contains(s, "timeout") || strings.Contains(s, "deadline") {
+		return "connection timed out (DNS block or offline?)"
+	}
+	if len(s) > 60 {
+		s = s[:59] + "…"
+	}
+	return s
+}
 
 // ---- pick ----
 

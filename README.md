@@ -50,7 +50,26 @@ Keys: arrows / `j`/`k` to move, `↵` to select, `esc` to go back, `q` to quit.
 ./whatnext list [--watched]
 ./whatnext watched "Paddington 2"
 ./whatnext refresh
+./whatnext doctor
 ```
+
+### `doctor`
+
+One-shot health check — run it first if enrichment misbehaves:
+
+```
+whatnext doctor
+
+  ✓ API key      set (32 chars)
+  ✓ DNS          api.themoviedb.org → 3.175.86.67
+  ✓ TMDb API     reachable, key valid (142ms)
+  ✓ Pool         214 titles · 30 watched · 3 unenriched  ~/.whatnext
+```
+
+It flags a missing/rejected key, and detects **ISP DNS-hijack block pages**
+(common in India — TMDb resolves to a `49.44.x.x` block IP). Fix: point your
+resolver at `1.1.1.1` / `8.8.8.8`. Exits non-zero on any hard failure, so it's
+safe to gate scripts on.
 
 ## Storage
 
