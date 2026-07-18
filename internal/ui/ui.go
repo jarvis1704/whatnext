@@ -27,7 +27,15 @@ const (
 	scrBrowse
 	scrImport
 	scrProgress
+	scrOnboardKey
+	scrOnboardPath
 )
+
+// isTextEntry reports whether a screen has a focused text input, where the "q"
+// global-quit shortcut must be treated as literal input instead.
+func isTextEntry(s screen) bool {
+	return s == scrImport || s == scrOnboardKey || s == scrOnboardPath
+}
 
 // frameInterval drives every ambient animation (gradient, pulses, sprockets).
 const frameInterval = 70 * time.Millisecond
@@ -66,9 +74,11 @@ type model struct {
 	// browse
 	browse browseState
 
-	// import
-	pathInput textinput.Model
-	importErr string
+	// onboarding + import
+	onboarding bool
+	keyInput   textinput.Model
+	pathInput  textinput.Model
+	importErr  string
 
 	// progress (import/refresh enrichment)
 	prog progressState
@@ -92,13 +102,19 @@ func New() (model, error) {
 
 	var client *tmdb.Client
 	var keyErr error
-	client, keyErr = tmdb.New(os.Getenv("TMDB_API_KEY"))
+	client, keyErr = tmdb.New(store.ResolveKey())
 
 	ti := textinput.New()
 	ti.Placeholder = "~/Downloads/letterboxd-export.zip"
 	ti.Prompt = styleAccent.Render("› ")
 	ti.CharLimit = 512
 	ti.Width = 48
+
+	ki := textinput.New()
+	ki.Placeholder = "paste your TMDb v3 API key…"
+	ki.Prompt = styleAccent.Render("› ")
+	ki.CharLimit = 128
+	ki.Width = 48
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -116,15 +132,29 @@ func New() (model, error) {
 		tmdb:      client,
 		tmdbErr:   keyErr,
 		pathInput: ti,
+		keyInput:  ki,
 		spinner:   sp,
 		bar:       bar,
 		filter:    newFilterState(moods),
+	}
+
+	// First run (no config.json yet) → walk the onboarding flow. If a key is
+	// already supplied via the environment, skip straight to the import step.
+	if !store.ConfigExists() {
+		m.onboarding = true
+		if os.Getenv("TMDB_API_KEY") != "" {
+			m.screen = scrOnboardPath
+			m.pathInput.Focus()
+		} else {
+			m.screen = scrOnboardKey
+			m.keyInput.Focus()
+		}
 	}
 	return m, nil
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(tickCmd(), m.spinner.Tick)
+	return tea.Batch(tickCmd(), m.spinner.Tick, textinput.Blink)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -149,14 +179,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		// Global quit works everywhere except while typing a path.
-		if m.screen != scrImport {
+		// Global quit works everywhere except in text-entry screens, where "q"
+		// is literal input (ctrl+c still quits).
+		if isTextEntry(m.screen) {
+			if msg.String() == "ctrl+c" {
+				return m.quit()
+			}
+		} else {
 			switch msg.String() {
 			case "ctrl+c", "q":
 				return m.quit()
 			}
-		} else if msg.String() == "ctrl+c" {
-			return m.quit()
 		}
 		return m.updateScreen(msg)
 
@@ -188,6 +221,10 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateImport(msg)
 	case scrProgress:
 		return m.updateProgress(msg)
+	case scrOnboardKey:
+		return m.updateOnboardKey(msg)
+	case scrOnboardPath:
+		return m.updateOnboardPath(msg)
 	}
 	return m, nil
 }
@@ -228,6 +265,10 @@ func (m model) View() string {
 		body = m.viewImport()
 	case scrProgress:
 		body = m.viewProgress()
+	case scrOnboardKey:
+		body = m.viewOnboardKey()
+	case scrOnboardPath:
+		body = m.viewOnboardPath()
 	}
 	return styleApp.Render(body)
 }

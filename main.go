@@ -144,10 +144,10 @@ func cmdRefresh(args []string) {
 
 // runEnrichment enriches the pool with a live single-line progress readout.
 func runEnrichment(data *store.Data, verb string) {
-	client, err := tmdb.New(os.Getenv("TMDB_API_KEY"))
+	client, err := tmdb.New(store.ResolveKey())
 	if err != nil {
-		fmt.Println(c(aAmber, "⚠ TMDB_API_KEY not set — skipping enrichment."))
-		fmt.Println(c(aDim, "  export TMDB_API_KEY=\"your-key\" then run: whatnext refresh"))
+		fmt.Println(c(aAmber, "⚠ No TMDb API key — skipping enrichment."))
+		fmt.Println(c(aDim, "  Run whatnext once for onboarding, or export TMDB_API_KEY, then: whatnext refresh"))
 		return
 	}
 	total := enrich.CountUnenriched(data)
@@ -201,12 +201,16 @@ func cmdDoctor(_ []string) {
 	ok := true
 
 	// 1. API key presence (never print the value).
-	key := os.Getenv("TMDB_API_KEY")
+	key := store.ResolveKey()
 	if key == "" {
-		checkln(false, "API key", "TMDB_API_KEY not set — enrichment disabled")
+		checkln(false, "API key", "no key (run onboarding or export TMDB_API_KEY)")
 		ok = false
 	} else {
-		checkln(true, "API key", fmt.Sprintf("set (%d chars)", len(key)))
+		src := "config"
+		if os.Getenv("TMDB_API_KEY") != "" {
+			src = "env"
+		}
+		checkln(true, "API key", fmt.Sprintf("set (%d chars, from %s)", len(key), src))
 	}
 
 	// 2. DNS — resolve the API host and flag ISP block-page hijacking.
