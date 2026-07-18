@@ -1,0 +1,331 @@
+// Command whatnext picks what to watch next from your Letterboxd watchlist.
+//
+// Run it with no arguments for the full-screen interactive TUI, or use the
+// classic subcommands (import / pick / list / watched / refresh) for scripting.
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+
+	"whatnext/internal/enrich"
+	"whatnext/internal/letterboxd"
+	"whatnext/internal/mood"
+	"whatnext/internal/pick"
+	"whatnext/internal/store"
+	"whatnext/internal/tmdb"
+	"whatnext/internal/ui"
+)
+
+// tiny ANSI helpers so CLI output has a bit of life without a TUI dependency.
+const (
+	aReset  = "\033[0m"
+	aBold   = "\033[1m"
+	aDim    = "\033[2m"
+	aGold   = "\033[38;5;220m"
+	aGreen  = "\033[38;5;114m"
+	aRed    = "\033[38;5;210m"
+	aViolet = "\033[38;5;141m"
+	aAmber  = "\033[38;5;215m"
+)
+
+func c(color, s string) string { return color + s + aReset }
+
+func main() {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		// No subcommand → launch the interactive TUI.
+		if err := ui.Run(); err != nil {
+			fail(err)
+		}
+		return
+	}
+
+	switch args[0] {
+	case "import":
+		cmdImport(args[1:])
+	case "pick":
+		cmdPick(args[1:])
+	case "list":
+		cmdList(args[1:])
+	case "watched":
+		cmdWatched(args[1:])
+	case "refresh":
+		cmdRefresh(args[1:])
+	case "help", "-h", "--help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", args[0])
+		usage()
+		os.Exit(2)
+	}
+}
+
+func usage() {
+	fmt.Printf(`%s — pick your next watch
+
+%s
+  whatnext                          launch the interactive TUI
+  whatnext import <path>            import a Letterboxd .zip or watchlist.csv
+  whatnext pick [flags]             random pick from your unwatched pool
+  whatnext list [--watched]         print the pool as a table
+  whatnext watched "<title>"        mark a title watched (fuzzy match)
+  whatnext refresh                  retry TMDb enrichment for unenriched titles
+
+%s
+  --genre <name>        filter to a single genre
+  --mood <name>         filter by mood (cozy, intense, mindbending, …)
+  --type <movie|tv>     filter by media type
+  --max-runtime <min>   cap runtime in minutes
+
+%s
+  TMDB_API_KEY          free TMDb v3 key, required for enrichment
+`,
+		c(aBold+aGold, "whatnext"),
+		c(aViolet, "USAGE"),
+		c(aViolet, "PICK FLAGS"),
+		c(aViolet, "ENVIRONMENT"),
+	)
+}
+
+// ---- import ----
+
+func cmdImport(args []string) {
+	fs := flag.NewFlagSet("import", flag.ExitOnError)
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		fail(fmt.Errorf("usage: whatnext import <path-to-export.zip|watchlist.csv>"))
+	}
+	path := fs.Arg(0)
+
+	titles, err := letterboxd.ParseWatchlist(path)
+	if err != nil {
+		fail(err)
+	}
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	added := 0
+	for _, t := range titles {
+		if data.Upsert(t) {
+			added++
+		}
+	}
+	if err := data.Save(); err != nil {
+		fail(err)
+	}
+	fmt.Printf("Imported %s new titles (%s in pool).\n",
+		c(aBold+aGold, fmt.Sprintf("%d", added)),
+		c(aDim, fmt.Sprintf("%d", len(data.Titles))))
+
+	runEnrichment(data, "enriching")
+}
+
+// ---- refresh ----
+
+func cmdRefresh(args []string) {
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	if enrich.CountUnenriched(data) == 0 {
+		fmt.Println(c(aGreen, "✓ Everything is already enriched."))
+		return
+	}
+	runEnrichment(data, "refreshing")
+}
+
+// runEnrichment enriches the pool with a live single-line progress readout.
+func runEnrichment(data *store.Data, verb string) {
+	client, err := tmdb.New(os.Getenv("TMDB_API_KEY"))
+	if err != nil {
+		fmt.Println(c(aAmber, "⚠ TMDB_API_KEY not set — skipping enrichment."))
+		fmt.Println(c(aDim, "  export TMDB_API_KEY=\"your-key\" then run: whatnext refresh"))
+		return
+	}
+	total := enrich.CountUnenriched(data)
+	if total == 0 {
+		return
+	}
+	fmt.Printf("%s %d titles via TMDb…\n", capitalize(verb), total)
+
+	var found, missed, errs int
+	enrich.Run(data, client, func(p enrich.Progress) {
+		switch {
+		case p.Err != nil:
+			errs++
+		case p.Found:
+			found++
+		default:
+			missed++
+		}
+		// carriage-return progress line
+		fmt.Printf("\r\033[K%s %d/%d  %s %s %s  %s",
+			spinnerFrame(p.Done),
+			p.Done, p.Total,
+			c(aGreen, fmt.Sprintf("✓%d", found)),
+			c(aAmber, fmt.Sprintf("?%d", missed)),
+			c(aRed, fmt.Sprintf("✗%d", errs)),
+			c(aDim, truncateStr(p.Title.Name, 30)),
+		)
+	})
+	fmt.Print("\r\033[K")
+	if err := data.Save(); err != nil {
+		fail(err)
+	}
+	fmt.Printf("%s %d enriched, %d not found, %d errors\n",
+		c(aGreen, "✓"), found, missed, errs)
+}
+
+var spin = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func spinnerFrame(i int) string { return c(aGold, spin[i%len(spin)]) }
+
+// ---- pick ----
+
+func cmdPick(args []string) {
+	fs := flag.NewFlagSet("pick", flag.ExitOnError)
+	genre := fs.String("genre", "", "single genre filter")
+	moodName := fs.String("mood", "", "mood filter")
+	mediaType := fs.String("type", "", "media type: movie|tv")
+	maxRuntime := fs.Int("max-runtime", 0, "max runtime in minutes")
+	fs.Parse(args)
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime}
+	if *moodName != "" {
+		cfg, err := mood.Load()
+		if err != nil {
+			fail(err)
+		}
+		g, ok := cfg.Genres(*moodName)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "unknown mood %q. known: %s\n", *moodName, strings.Join(cfg.Names(), ", "))
+			os.Exit(2)
+		}
+		f.MoodGenres = g
+	}
+
+	cands := pick.Candidates(data.Titles, f)
+	t, ok := pick.Random(cands)
+	if !ok {
+		fmt.Println(c(aAmber, "No unwatched titles match those filters."))
+		fmt.Println(c(aDim, "Try loosening a filter, or import more titles."))
+		os.Exit(1)
+	}
+
+	meta := []string{}
+	if len(t.Genres) > 0 {
+		meta = append(meta, strings.Join(t.Genres, ", "))
+	}
+	if t.RuntimeMins > 0 {
+		meta = append(meta, fmt.Sprintf("%d min", t.RuntimeMins))
+	}
+	line := fmt.Sprintf("🎬 %s", c(aBold+aGold, t.Name))
+	if t.Year != "" {
+		line += c(aDim, " ("+t.Year+")")
+	}
+	if len(meta) > 0 {
+		line += c(aViolet, " — "+strings.Join(meta, " — "))
+	}
+	fmt.Println(line)
+}
+
+// ---- list ----
+
+func cmdList(args []string) {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	watchedOnly := fs.Bool("watched", false, "show only watched titles")
+	fs.Parse(args)
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	shown := 0
+	for _, t := range data.Titles {
+		if *watchedOnly && !t.Watched {
+			continue
+		}
+		status := c(aDim, "○")
+		if t.Watched {
+			status = c(aGreen, "✓")
+		} else if !t.Enriched {
+			status = c(aAmber, "…")
+		}
+		name := t.Name
+		if t.Year != "" {
+			name += " (" + t.Year + ")"
+		}
+		meta := ""
+		if t.Enriched && len(t.Genres) > 0 {
+			meta = c(aDim, "  "+strings.Join(t.Genres, ", "))
+			if t.RuntimeMins > 0 {
+				meta += c(aDim, fmt.Sprintf(" · %dm", t.RuntimeMins))
+			}
+		}
+		fmt.Printf("%s %-42s%s\n", status, name, meta)
+		shown++
+	}
+	if shown == 0 {
+		fmt.Println(c(aDim, "Nothing to show. Run: whatnext import <path>"))
+	}
+}
+
+// ---- watched ----
+
+func cmdWatched(args []string) {
+	if len(args) < 1 {
+		fail(fmt.Errorf("usage: whatnext watched \"<title>\""))
+	}
+	query := strings.Join(args, " ")
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	matches := pick.MatchByName(data.Titles, query)
+	switch {
+	case len(matches) == 0:
+		fmt.Printf("No title matches %q.\n", query)
+		os.Exit(1)
+	case len(matches) > 1:
+		fmt.Println(c(aAmber, "Multiple matches — be more specific (add the year):"))
+		for _, mt := range matches {
+			fmt.Printf("  · %s (%s)\n", mt.Title.Name, mt.Title.Year)
+		}
+		os.Exit(1)
+	}
+	idx := matches[0].Index
+	data.Titles[idx].Watched = true
+	if err := data.Save(); err != nil {
+		fail(err)
+	}
+	fmt.Printf("%s Marked watched: %s\n", c(aGreen, "✓"), c(aBold, data.Titles[idx].Name))
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, c(aRed, "error: ")+err.Error())
+	os.Exit(1)
+}
+
+func capitalize(s string) string {
+	if s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+func truncateStr(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
+}
