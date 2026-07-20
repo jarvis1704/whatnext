@@ -57,6 +57,15 @@ func dataPath() (string, error) {
 	return filepath.Join(dir, "data.json"), nil
 }
 
+// undoPath returns the absolute path to undo.json.
+func undoPath() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "undo.json"), nil
+}
+
 // Load reads the pool from disk. A missing file is not an error: the first
 // run simply starts with an empty pool.
 func Load() (*Data, error) {
@@ -110,6 +119,62 @@ func (d *Data) Upsert(t Title) bool {
 	}
 	d.Titles = append(d.Titles, t)
 	return true
+}
+
+// UndoRecord captures a title's watched state just before it was changed, so
+// a single subsequent change can be reverted.
+type UndoRecord struct {
+	URI     string `json:"uri"`
+	Name    string `json:"name"`
+	Watched bool   `json:"watched"` // value to restore
+}
+
+// RecordUndo persists t's pre-change watched state, overwriting any previous
+// record. Call it right before flipping t.Watched.
+func RecordUndo(t Title) error {
+	path, err := undoPath()
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(UndoRecord{URI: t.LetterboxdURI, Name: t.Name, Watched: t.Watched})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, raw, 0o644)
+}
+
+// Undo reverts the last watched-state change recorded by RecordUndo, if any,
+// and clears the record so it can't be applied twice. ok reports whether
+// there was anything to undo.
+func (d *Data) Undo() (name string, ok bool, err error) {
+	path, err := undoPath()
+	if err != nil {
+		return "", false, err
+	}
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var rec UndoRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return "", false, err
+	}
+	for i := range d.Titles {
+		if d.Titles[i].LetterboxdURI == rec.URI {
+			d.Titles[i].Watched = rec.Watched
+			name = d.Titles[i].Name
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		return "", false, nil
+	}
+	_ = os.Remove(path)
+	return name, true, nil
 }
 
 // Unenriched returns pointers to every pool entry still awaiting a

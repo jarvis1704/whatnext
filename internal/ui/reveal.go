@@ -87,6 +87,8 @@ func (m model) updateReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startReveal()
 	case "w": // mark this pick watched
 		return m.markWatchedURI(m.reveal.result.LetterboxdURI)
+	case "u": // undo the last watched change
+		return m.undoLastWatched()
 	}
 	return m, nil
 }
@@ -94,6 +96,7 @@ func (m model) updateReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) markWatchedURI(uri string) (tea.Model, tea.Cmd) {
 	for i := range m.data.Titles {
 		if m.data.Titles[i].LetterboxdURI == uri {
+			_ = store.RecordUndo(m.data.Titles[i])
 			m.data.Titles[i].Watched = true
 			m.reveal.result.Watched = true
 			m.dirty = true
@@ -103,6 +106,27 @@ func (m model) markWatchedURI(uri string) (tea.Model, tea.Cmd) {
 			break
 		}
 	}
+	return m, nil
+}
+
+// undoLastWatched reverts the most recent watched-state change, wherever it
+// happened (reveal or browse), and reports it via the flash line.
+func (m model) undoLastWatched() (tea.Model, tea.Cmd) {
+	name, ok, err := m.data.Undo()
+	if err != nil || !ok {
+		m.flash = "Nothing to undo."
+		return m, nil
+	}
+	m.dirty = true
+	_ = m.data.Save()
+	m.dirty = false
+	for _, t := range m.data.Titles {
+		if t.LetterboxdURI == m.reveal.result.LetterboxdURI {
+			m.reveal.result.Watched = t.Watched
+			break
+		}
+	}
+	m.flash = "↺ undid: " + name
 	return m, nil
 }
 
@@ -211,6 +235,7 @@ func (m model) viewLanded() string {
 	foot := m.footer(
 		[2]string{"↵/r", "reshuffle"},
 		[2]string{"w", "mark watched"},
+		[2]string{"u", "undo"},
 		[2]string{"esc", "filters"},
 	)
 	blocks := []string{card, ""}

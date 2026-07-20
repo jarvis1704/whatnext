@@ -86,12 +86,18 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "w", "enter", " ":
 		if len(b.rows) > 0 {
 			idx := b.rows[b.cursor]
+			_ = store.RecordUndo(m.data.Titles[idx])
 			m.data.Titles[idx].Watched = !m.data.Titles[idx].Watched
 			m.dirty = true
 			_ = m.data.Save()
 			m.dirty = false
 			b.rebuild(m.data)
 		}
+	case "u":
+		mm, cmd := m.undoLastWatched()
+		m2 := mm.(model)
+		m2.browse.rebuild(m2.data)
+		return m2, cmd
 	}
 	return m, nil
 }
@@ -144,7 +150,7 @@ func (m model) viewBrowse() string {
 			msg = "No titles match " + strconv.Quote(b.query) + "."
 		}
 		empty := stylePanel.Render(styleSubtle.Render(msg))
-		foot := m.footer([2]string{"/", "search"}, [2]string{"tab", "toggle watched"}, [2]string{"esc", "back"})
+		foot := m.footer([2]string{"/", "search"}, [2]string{"tab", "toggle watched"}, [2]string{"u", "undo"}, [2]string{"esc", "back"})
 		return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", empty, "", foot)
 	}
 

@@ -58,6 +58,8 @@ func main() {
 		cmdList(args[1:])
 	case "watched":
 		cmdWatched(args[1:])
+	case "undo":
+		cmdUndo(args[1:])
 	case "stats":
 		cmdStats(args[1:])
 	case "region":
@@ -86,6 +88,7 @@ func usage() {
   whatnext pick [flags]             random pick from your unwatched pool
   whatnext list [--watched] [--on <provider>]   print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
+  whatnext undo                     unmark the last watched change
   whatnext stats                    genre/decade/runtime breakdown of your pool
   whatnext region [<code>]          show or set the streaming region (e.g. US, IN, GB)
   whatnext refresh                  retry TMDb enrichment for unenriched titles
@@ -617,11 +620,35 @@ func cmdWatched(args []string) {
 		os.Exit(1)
 	}
 	idx := matches[0].Index
+	if err := store.RecordUndo(data.Titles[idx]); err != nil {
+		fail(err)
+	}
 	data.Titles[idx].Watched = true
 	if err := data.Save(); err != nil {
 		fail(err)
 	}
 	fmt.Printf("%s Marked watched: %s\n", c(aGreen, "✓"), c(aBold, data.Titles[idx].Name))
+}
+
+// ---- undo ----
+
+func cmdUndo(args []string) {
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	name, ok, err := data.Undo()
+	if err != nil {
+		fail(err)
+	}
+	if !ok {
+		fmt.Println(c(aAmber, "Nothing to undo."))
+		return
+	}
+	if err := data.Save(); err != nil {
+		fail(err)
+	}
+	fmt.Printf("%s Undid watched change: %s\n", c(aGreen, "↺"), c(aBold, name))
 }
 
 func fail(err error) {
