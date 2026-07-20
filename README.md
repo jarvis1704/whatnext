@@ -8,25 +8,58 @@ classic subcommands for scripting.
 
 ## Install
 
-**Download a binary** — grab the archive for your OS/arch from the
-[latest release](https://github.com/jarvis1704/whatnext/releases/latest),
-extract it, and put `whatnext` somewhere on your `PATH`:
+Prebuilt binaries for every release live on the
+[Releases page](https://github.com/jarvis1704/whatnext/releases/latest).
+
+### Linux
 
 ```bash
-# example: Linux/amd64 — swap linux_amd64 for darwin_amd64, darwin_arm64,
-# linux_arm64, or windows_amd64 (as a .zip) as needed
 curl -sSL https://github.com/jarvis1704/whatnext/releases/latest/download/whatnext_linux_amd64.tar.gz \
   | tar -xz whatnext
-sudo mv whatnext /usr/local/bin/
+sudo install whatnext /usr/local/bin/whatnext
 ```
 
-**With Go installed:**
+Use `whatnext_linux_arm64.tar.gz` on an ARM machine (e.g. Raspberry Pi).
+
+### macOS
+
+```bash
+curl -sSL https://github.com/jarvis1704/whatnext/releases/latest/download/whatnext_darwin_arm64.tar.gz \
+  | tar -xz whatnext
+sudo install whatnext /usr/local/bin/whatnext
+```
+
+Use `whatnext_darwin_amd64.tar.gz` on an Intel Mac. The binary is unsigned,
+so on first run macOS Gatekeeper may block it — allow it via **System
+Settings → Privacy & Security**, or run `xattr -d com.apple.quarantine
+/usr/local/bin/whatnext` once.
+
+### Windows
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/jarvis1704/whatnext/releases/latest/download/whatnext_windows_amd64.zip -OutFile whatnext.zip
+Expand-Archive whatnext.zip -DestinationPath .
+```
+
+Then move `whatnext.exe` to a folder on your `PATH`. ARM64 devices should use
+`whatnext_windows_arm64.zip`.
+
+### Verify the download (optional)
+
+Every release also publishes `checksums.txt`:
+
+```bash
+curl -sSLO https://github.com/jarvis1704/whatnext/releases/latest/download/checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+```
+
+### With Go installed
 
 ```bash
 go install github.com/jarvis1704/whatnext@latest
 ```
 
-**From source:**
+### From source
 
 ```bash
 git clone https://github.com/jarvis1704/whatnext.git
