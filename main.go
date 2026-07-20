@@ -76,7 +76,7 @@ func usage() {
   whatnext                          launch the interactive TUI
   whatnext import <path>            import a Letterboxd .zip or watchlist.csv
   whatnext pick [flags]             random pick from your unwatched pool
-  whatnext list [--watched]         print the pool as a table
+  whatnext list [--watched] [--on <provider>]   print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
   whatnext stats                    genre/decade/runtime breakdown of your pool
   whatnext refresh                  retry TMDb enrichment for unenriched titles
@@ -87,14 +87,17 @@ func usage() {
   --mood <name>         filter by mood (cozy, intense, mindbending, …)
   --type <movie|tv>     filter by media type
   --max-runtime <min>   cap runtime in minutes
+  --on <provider>       filter to a streaming provider, e.g. Netflix
 
 %s
   TMDB_API_KEY          free TMDb v3 key, required for enrichment
+  WHATNEXT_REGION       ISO country code for watch-provider data (default %s)
 `,
 		c(aBold+aGold, "whatnext"),
 		c(aViolet, "USAGE"),
 		c(aViolet, "PICK FLAGS"),
 		c(aViolet, "ENVIRONMENT"),
+		store.DefaultRegion,
 	)
 }
 
@@ -139,7 +142,7 @@ func cmdRefresh(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	if enrich.CountUnenriched(data) == 0 {
+	if enrich.CountPending(data, store.ResolveRegion()) == 0 {
 		fmt.Println(c(aGreen, "✓ Everything is already enriched."))
 		return
 	}
@@ -154,14 +157,15 @@ func runEnrichment(data *store.Data, verb string) {
 		fmt.Println(c(aDim, "  Run whatnext once for onboarding, or export TMDB_API_KEY, then: whatnext refresh"))
 		return
 	}
-	total := enrich.CountUnenriched(data)
+	region := store.ResolveRegion()
+	total := enrich.CountPending(data, region)
 	if total == 0 {
 		return
 	}
 	fmt.Printf("%s %d titles via TMDb…\n", capitalize(verb), total)
 
 	var found, missed, errs int
-	enrich.Run(data, client, func(p enrich.Progress) {
+	enrich.Run(data, client, region, func(p enrich.Progress) {
 		switch {
 		case p.Err != nil:
 			errs++
@@ -249,7 +253,11 @@ func cmdDoctor(_ []string) {
 		fmt.Printf("  %s %-12s %s\n", c(aDim, "–"), "TMDb API", c(aDim, "skipped (no key)"))
 	}
 
-	// 4. Pool stats (always informational).
+	// 4. Watch-provider region.
+	region := store.ResolveRegion()
+	checkln(true, "Region", fmt.Sprintf("%s (watch-provider lookups)", region))
+
+	// 5. Pool stats (always informational).
 	if data, err := store.Load(); err == nil {
 		total, watched, unenriched := 0, 0, 0
 		for _, t := range data.Titles {
@@ -261,9 +269,10 @@ func cmdDoctor(_ []string) {
 				unenriched++
 			}
 		}
+		pending := enrich.CountPending(data, region)
 		home, _ := os.UserHomeDir()
-		checkln(true, "Pool", fmt.Sprintf("%d titles · %d watched · %d unenriched  %s",
-			total, watched, unenriched, c(aDim, home+"/.whatnext")))
+		checkln(true, "Pool", fmt.Sprintf("%d titles · %d watched · %d unenriched · %d need TMDb work  %s",
+			total, watched, unenriched, pending, c(aDim, home+"/.whatnext")))
 	} else {
 		warnln("Pool", "could not read pool: "+err.Error())
 	}
@@ -321,13 +330,14 @@ func cmdPick(args []string) {
 	moodName := fs.String("mood", "", "mood filter")
 	mediaType := fs.String("type", "", "media type: movie|tv")
 	maxRuntime := fs.Int("max-runtime", 0, "max runtime in minutes")
+	provider := fs.String("on", "", "streaming provider filter, e.g. Netflix")
 	fs.Parse(args)
 
 	data, err := store.Load()
 	if err != nil {
 		fail(err)
 	}
-	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime}
+	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider}
 	if *moodName != "" {
 		cfg, err := mood.Load()
 		if err != nil {
@@ -356,6 +366,9 @@ func cmdPick(args []string) {
 	if t.RuntimeMins > 0 {
 		meta = append(meta, fmt.Sprintf("%d min", t.RuntimeMins))
 	}
+	if len(t.Providers) > 0 {
+		meta = append(meta, "streaming on "+strings.Join(t.Providers, ", "))
+	}
 	line := fmt.Sprintf("🎬 %s", c(aBold+aGold, t.Name))
 	if t.Year != "" {
 		line += c(aDim, " ("+t.Year+")")
@@ -371,6 +384,7 @@ func cmdPick(args []string) {
 func cmdList(args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	watchedOnly := fs.Bool("watched", false, "show only watched titles")
+	provider := fs.String("on", "", "show only titles streaming on this provider")
 	fs.Parse(args)
 
 	data, err := store.Load()
@@ -380,6 +394,9 @@ func cmdList(args []string) {
 	shown := 0
 	for _, t := range data.Titles {
 		if *watchedOnly && !t.Watched {
+			continue
+		}
+		if *provider != "" && !hasProviderCI(t.Providers, *provider) {
 			continue
 		}
 		status := c(aDim, "○")
@@ -399,12 +416,24 @@ func cmdList(args []string) {
 				meta += c(aDim, fmt.Sprintf(" · %dm", t.RuntimeMins))
 			}
 		}
+		if len(t.Providers) > 0 {
+			meta += c(aCyanBar(), "  "+strings.Join(t.Providers, ", "))
+		}
 		fmt.Printf("%s %-42s%s\n", status, name, meta)
 		shown++
 	}
 	if shown == 0 {
 		fmt.Println(c(aDim, "Nothing to show. Run: whatnext import <path>"))
 	}
+}
+
+func hasProviderCI(providers []string, want string) bool {
+	for _, p := range providers {
+		if strings.EqualFold(p, want) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---- stats ----

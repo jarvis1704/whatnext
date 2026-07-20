@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -158,6 +159,35 @@ func (c *Client) tvDetails(id int) (Result, bool, error) {
 		Genres:      genreNames(dr),
 		RuntimeMins: rt,
 	}, true, nil
+}
+
+type providersResp struct {
+	Results map[string]struct {
+		Flatrate []struct {
+			ProviderName string `json:"provider_name"`
+		} `json:"flatrate"`
+	} `json:"results"`
+}
+
+// WatchProviders returns the subscription ("flatrate") streaming services
+// offering the given title in region (an ISO 3166-1 country code, e.g. "US").
+// A nil, non-error result means the title isn't offered on any subscription
+// service in that region (it may still be available to rent/buy).
+func (c *Client) WatchProviders(mediaType string, id int, region string) ([]string, error) {
+	var pr providersResp
+	if err := c.get(fmt.Sprintf("/%s/%d/watch/providers", mediaType, id), nil, &pr); err != nil {
+		return nil, err
+	}
+	entry, ok := pr.Results[strings.ToUpper(region)]
+	if !ok || len(entry.Flatrate) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(entry.Flatrate))
+	for _, p := range entry.Flatrate {
+		out = append(out, p.ProviderName)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func genreNames(dr detailResp) []string {

@@ -5,13 +5,19 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds user settings persisted to ~/.whatnext/config.json. Its presence
 // on disk also marks that first-run onboarding has completed.
 type Config struct {
 	TMDbKey string `json:"tmdb_api_key"`
+	Region  string `json:"region"` // ISO 3166-1 country code for watch-provider lookups, e.g. "US", "IN"
 }
+
+// DefaultRegion is used when no region has been configured yet (upgrades from
+// before the region step existed).
+const DefaultRegion = "US"
 
 func configPath() (string, error) {
 	dir, err := Dir()
@@ -76,4 +82,16 @@ func ResolveKey() string {
 		return c.TMDbKey
 	}
 	return ""
+}
+
+// ResolveRegion returns the configured watch-provider region, preferring the
+// WHATNEXT_REGION environment variable, then config.json, then DefaultRegion.
+func ResolveRegion() string {
+	if r := os.Getenv("WHATNEXT_REGION"); r != "" {
+		return strings.ToUpper(r)
+	}
+	if c, err := LoadConfig(); err == nil && c.Region != "" {
+		return strings.ToUpper(c.Region)
+	}
+	return DefaultRegion
 }

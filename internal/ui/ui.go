@@ -29,13 +29,21 @@ const (
 	scrProgress
 	scrStats
 	scrOnboardKey
+	scrOnboardRegion
 	scrOnboardPath
 )
 
-// isTextEntry reports whether a screen has a focused text input, where the "q"
-// global-quit shortcut must be treated as literal input instead.
-func isTextEntry(s screen) bool {
-	return s == scrImport || s == scrOnboardKey || s == scrOnboardPath
+// isTextEntry reports whether the active screen has a focused text input,
+// where the "q" global-quit shortcut must be treated as literal input
+// instead.
+func (m model) isTextEntry() bool {
+	switch m.screen {
+	case scrImport, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
+		return true
+	case scrBrowse:
+		return m.browse.filtering
+	}
+	return false
 }
 
 // frameInterval drives every ambient animation (gradient, pulses, sprockets).
@@ -58,8 +66,9 @@ type model struct {
 	data     *store.Data
 	moods    *mood.Config
 	tmdb     *tmdb.Client
-	tmdbErr  error // non-nil when TMDB_API_KEY is missing
-	dirty    bool  // pool changed since last save
+	tmdbErr  error  // non-nil when TMDB_API_KEY is missing
+	region   string // ISO country code for watch-provider lookups
+	dirty    bool   // pool changed since last save
 	quitting bool
 
 	// home
@@ -76,10 +85,11 @@ type model struct {
 	browse browseState
 
 	// onboarding + import
-	onboarding bool
-	keyInput   textinput.Model
-	pathInput  textinput.Model
-	importErr  string
+	onboarding  bool
+	keyInput    textinput.Model
+	regionInput textinput.Model
+	pathInput   textinput.Model
+	importErr   string
 
 	// progress (import/refresh enrichment)
 	prog progressState
@@ -117,6 +127,12 @@ func New() (model, error) {
 	ki.CharLimit = 128
 	ki.Width = 48
 
+	ri := textinput.New()
+	ri.Placeholder = "US"
+	ri.Prompt = styleAccent.Render("› ")
+	ri.CharLimit = 2
+	ri.Width = 8
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cGold)
@@ -127,25 +143,27 @@ func New() (model, error) {
 	)
 
 	m := model{
-		screen:    scrHome,
-		data:      data,
-		moods:     moods,
-		tmdb:      client,
-		tmdbErr:   keyErr,
-		pathInput: ti,
-		keyInput:  ki,
-		spinner:   sp,
-		bar:       bar,
-		filter:    newFilterState(moods),
+		screen:      scrHome,
+		data:        data,
+		moods:       moods,
+		tmdb:        client,
+		tmdbErr:     keyErr,
+		region:      store.ResolveRegion(),
+		pathInput:   ti,
+		keyInput:    ki,
+		regionInput: ri,
+		spinner:     sp,
+		bar:         bar,
+		filter:      newFilterState(moods),
 	}
 
 	// First run (no config.json yet) → walk the onboarding flow. If a key is
-	// already supplied via the environment, skip straight to the import step.
+	// already supplied via the environment, skip straight to the region step.
 	if !store.ConfigExists() {
 		m.onboarding = true
 		if os.Getenv("TMDB_API_KEY") != "" {
-			m.screen = scrOnboardPath
-			m.pathInput.Focus()
+			m.screen = scrOnboardRegion
+			m.regionInput.Focus()
 		} else {
 			m.screen = scrOnboardKey
 			m.keyInput.Focus()
@@ -182,7 +200,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// Global quit works everywhere except in text-entry screens, where "q"
 		// is literal input (ctrl+c still quits).
-		if isTextEntry(m.screen) {
+		if m.isTextEntry() {
 			if msg.String() == "ctrl+c" {
 				return m.quit()
 			}
@@ -226,6 +244,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateStats(msg)
 	case scrOnboardKey:
 		return m.updateOnboardKey(msg)
+	case scrOnboardRegion:
+		return m.updateOnboardRegion(msg)
 	case scrOnboardPath:
 		return m.updateOnboardPath(msg)
 	}
@@ -272,6 +292,8 @@ func (m model) View() string {
 		body = m.viewStats()
 	case scrOnboardKey:
 		body = m.viewOnboardKey()
+	case scrOnboardRegion:
+		body = m.viewOnboardRegion()
 	case scrOnboardPath:
 		body = m.viewOnboardPath()
 	}

@@ -19,15 +19,15 @@ func (m model) updateOnboardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		k := strings.TrimSpace(m.keyInput.Value())
 		m.saveKey(k) // persists config.json (marks onboarding underway)
 		m.keyInput.Blur()
-		m.pathInput.Focus()
-		m.goTo(scrOnboardPath)
+		m.regionInput.Focus()
+		m.goTo(scrOnboardRegion)
 		return m, textinput.Blink
 	case "esc":
 		// Skip the key for now; still persist config so we don't re-onboard.
 		m.saveKey("")
 		m.keyInput.Blur()
-		m.pathInput.Focus()
-		m.goTo(scrOnboardPath)
+		m.regionInput.Focus()
+		m.goTo(scrOnboardRegion)
 		return m, textinput.Blink
 	}
 	var cmd tea.Cmd
@@ -50,7 +50,7 @@ func (m *model) saveKey(k string) {
 
 func (m model) viewOnboardKey() string {
 	welcome := renderBanner(float64(m.frame) / 40.0)
-	step := styleAccent.Render("Step 1 of 2") + styleSubtle.Render("  ·  TMDb API key")
+	step := styleAccent.Render("Step 1 of 3") + styleSubtle.Render("  ·  TMDb API key")
 
 	body := lipgloss.JoinVertical(lipgloss.Left,
 		styleSubtle.Render("whatnext enriches your watchlist with genre, runtime, and"),
@@ -71,7 +71,64 @@ func (m model) viewOnboardKey() string {
 	return lipgloss.JoinVertical(lipgloss.Left, welcome, "", step, "", panel, "", note, "", foot)
 }
 
-// ---- step 2: Letterboxd watchlist ----
+// ---- step 2: watch-provider region ----
+
+func (m model) updateOnboardRegion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		r := strings.ToUpper(strings.TrimSpace(m.regionInput.Value()))
+		if r == "" {
+			r = store.DefaultRegion
+		}
+		m.saveRegion(r)
+		m.regionInput.Blur()
+		m.pathInput.Focus()
+		m.goTo(scrOnboardPath)
+		return m, textinput.Blink
+	case "esc":
+		// Skip; default region is still saved so we don't re-onboard.
+		m.saveRegion(store.DefaultRegion)
+		m.regionInput.Blur()
+		m.pathInput.Focus()
+		m.goTo(scrOnboardPath)
+		return m, textinput.Blink
+	}
+	var cmd tea.Cmd
+	m.regionInput, cmd = m.regionInput.Update(msg)
+	return m, cmd
+}
+
+// saveRegion writes the region to config.json and updates the live model so
+// enrichment this session uses it immediately.
+func (m *model) saveRegion(r string) {
+	cfg, _ := store.LoadConfig()
+	cfg.Region = r
+	_ = cfg.Save()
+	m.region = r
+}
+
+func (m model) viewOnboardRegion() string {
+	welcome := renderBanner(float64(m.frame) / 40.0)
+	step := styleAccent.Render("Step 2 of 3") + styleSubtle.Render("  ·  Streaming region")
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		styleSubtle.Render("Which country's streaming catalog should \"where to watch\""),
+		styleSubtle.Render("filters use? Two-letter code, e.g. US, IN, GB, CA."),
+		"",
+		m.regionInput.View(),
+	)
+	panel := stylePanel.Render(body)
+
+	note := styleSubtle.Render("Stored locally at ~/.whatnext/config.json. Change it anytime by editing that file.")
+	foot := m.footer(
+		[2]string{"↵", "save & continue"},
+		[2]string{"esc", "use " + store.DefaultRegion},
+		[2]string{"ctrl+c", "quit"},
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, welcome, "", step, "", panel, "", note, "", foot)
+}
+
+// ---- step 3: Letterboxd watchlist ----
 
 func (m model) updateOnboardPath(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
@@ -111,7 +168,7 @@ func (m *model) completeOnboarding() {
 
 func (m model) viewOnboardPath() string {
 	welcome := renderBanner(float64(m.frame) / 40.0)
-	step := styleAccent.Render("Step 2 of 2") + styleSubtle.Render("  ·  Letterboxd watchlist")
+	step := styleAccent.Render("Step 3 of 3") + styleSubtle.Render("  ·  Letterboxd watchlist")
 
 	keyState := styleGood.Render("✓ API key saved")
 	if m.tmdb == nil {

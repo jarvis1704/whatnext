@@ -21,6 +21,12 @@ type Title struct {
 	RuntimeMins   int      `json:"runtime_mins"`
 	Enriched      bool     `json:"enriched"`
 	Watched       bool     `json:"watched"`
+
+	// Providers lists the streaming services offering this title on a
+	// subscription (flatrate), for ProvidersRegion. Empty means "checked,
+	// nothing found" — nil/unset ProvidersRegion means "never checked".
+	Providers       []string `json:"providers,omitempty"`
+	ProvidersRegion string   `json:"providers_region,omitempty"`
 }
 
 // Data is the on-disk shape of data.json.
@@ -113,6 +119,20 @@ func (d *Data) Unenriched() []*Title {
 	for i := range d.Titles {
 		if !d.Titles[i].Enriched {
 			out = append(out, &d.Titles[i])
+		}
+	}
+	return out
+}
+
+// NeedsProviders returns pointers to every enriched title whose cached
+// watch-provider data is missing or was fetched for a different region than
+// the one given.
+func (d *Data) NeedsProviders(region string) []*Title {
+	var out []*Title
+	for i := range d.Titles {
+		t := &d.Titles[i]
+		if t.Enriched && t.ProvidersRegion != region {
+			out = append(out, t)
 		}
 	}
 	return out

@@ -16,11 +16,12 @@ type Filter struct {
 	MoodGenres []string // any-of genre set expanded from a mood
 	MediaType  string   // "movie" | "tv"
 	MaxRuntime int      // minutes; 0 = no cap
+	Provider   string   // streaming provider name (case-insensitive), e.g. "Netflix"
 }
 
 // Active reports whether any constraint is set.
 func (f Filter) Active() bool {
-	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0
+	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 || f.Provider != ""
 }
 
 // Candidates returns every unwatched title matching f. When a genre or mood
@@ -56,6 +57,11 @@ func matches(t store.Title, f Filter) bool {
 	}
 	if len(f.MoodGenres) > 0 {
 		if !t.Enriched || !hasAnyGenre(t.Genres, f.MoodGenres) {
+			return false
+		}
+	}
+	if f.Provider != "" {
+		if !hasGenre(t.Providers, f.Provider) { // same case-insensitive membership check
 			return false
 		}
 	}

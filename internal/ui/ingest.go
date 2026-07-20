@@ -25,12 +25,15 @@ type parsedTitlesMsg struct {
 // runStepMsg triggers the next enrichment lookup after the polite delay.
 type runStepMsg struct{ step int }
 
-// enrichStepMsg carries the result of one TMDb lookup.
+// enrichStepMsg carries the result of one TMDb lookup, and — when a lookup
+// succeeded or the title was already enriched — its watch-provider refresh.
 type enrichStepMsg struct {
-	poolIdx int
-	res     tmdb.Result
-	found   bool
-	err     error
+	poolIdx   int
+	res       tmdb.Result
+	found     bool
+	providers []string
+	provErr   error
+	err       error
 }
 
 // ---- progress state ----
@@ -141,11 +144,14 @@ func (m model) startRefresh() (tea.Model, tea.Cmd) {
 	return m.beginEnrich()
 }
 
-// beginEnrich builds the unenriched queue and kicks off the first lookup.
+// beginEnrich builds the pending-work queue — unenriched titles, plus any
+// already-enriched title whose cached watch providers are stale for the
+// current region — and kicks off the first lookup.
 func (m model) beginEnrich() (tea.Model, tea.Cmd) {
 	m.prog.queue = nil
 	for i := range m.data.Titles {
-		if !m.data.Titles[i].Enriched {
+		t := &m.data.Titles[i]
+		if !t.Enriched || t.ProvidersRegion != m.region {
 			m.prog.queue = append(m.prog.queue, i)
 		}
 	}
@@ -168,26 +174,52 @@ func (m model) enrichCmd(step int) tea.Cmd {
 	poolIdx := m.prog.queue[step]
 	t := m.data.Titles[poolIdx]
 	client := m.tmdb
+	region := m.region
 	return func() tea.Msg {
-		res, ok, err := client.Lookup(t.Name, t.Year)
-		return enrichStepMsg{poolIdx: poolIdx, res: res, found: ok, err: err}
+		if !t.Enriched {
+			res, ok, err := client.Lookup(t.Name, t.Year)
+			if err != nil || !ok {
+				return enrichStepMsg{poolIdx: poolIdx, res: res, found: ok, err: err}
+			}
+			provs, perr := client.WatchProviders(res.MediaType, res.TMDbID, region)
+			return enrichStepMsg{poolIdx: poolIdx, res: res, found: true, providers: provs, provErr: perr}
+		}
+		// Already enriched — this pass is purely a provider-region refresh.
+		provs, perr := client.WatchProviders(t.MediaType, t.TMDbID, region)
+		return enrichStepMsg{poolIdx: poolIdx, found: true, providers: provs, provErr: perr}
 	}
 }
 
 func (m model) updateEnrichStep(msg enrichStepMsg) (tea.Model, tea.Cmd) {
 	t := &m.data.Titles[msg.poolIdx]
+	wasEnriched := t.Enriched
 	switch {
 	case msg.err != nil:
 		m.prog.errs++
 		m.pushLog(styleBad.Render("✗ ") + t.Name + styleSubtle.Render("  "+shortErr(msg.err)))
-	case msg.found:
+	case !wasEnriched && msg.found:
 		t.TMDbID = msg.res.TMDbID
 		t.MediaType = msg.res.MediaType
 		t.Genres = msg.res.Genres
 		t.RuntimeMins = msg.res.RuntimeMins
 		t.Enriched = true
+		if msg.provErr == nil {
+			t.Providers = msg.providers
+			t.ProvidersRegion = m.region
+		}
 		m.prog.found++
 		m.pushLog(styleGood.Render("✓ ") + t.Name + styleSubtle.Render("  "+strings.Join(t.Genres, ", ")))
+	case wasEnriched && msg.found:
+		if msg.provErr == nil {
+			t.Providers = msg.providers
+			t.ProvidersRegion = m.region
+		}
+		m.prog.found++
+		where := "no streaming providers found"
+		if len(msg.providers) > 0 {
+			where = strings.Join(msg.providers, ", ")
+		}
+		m.pushLog(styleGood.Render("▸ ") + t.Name + styleSubtle.Render("  "+where))
 	default:
 		m.prog.notFound++
 		m.pushLog(styleWarn.Render("? ") + t.Name + styleSubtle.Render("  no match"))

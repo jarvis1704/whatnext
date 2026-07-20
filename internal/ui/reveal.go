@@ -187,9 +187,19 @@ func (m model) viewLanded() string {
 		meta = styleSubtle.Render("not yet enriched — no genre/runtime data")
 	}
 
+	var streaming string
+	if len(t.Providers) > 0 {
+		streaming = lipgloss.NewStyle().Foreground(dimColor(hex(string(cCyan)), 1-fade)).
+			Render("📺  " + strings.Join(t.Providers, ", "))
+	}
+
 	marquee := gradientText("🎬  Tonight's pick", float64(m.frame)/24.0, true)
 
-	inner := lipgloss.JoinVertical(lipgloss.Center, marquee, "", titleLine, meta)
+	cardBlocks := []string{marquee, "", titleLine, meta}
+	if streaming != "" {
+		cardBlocks = append(cardBlocks, streaming)
+	}
+	inner := lipgloss.JoinVertical(lipgloss.Center, cardBlocks...)
 	borderCol := lipgloss.Color(gradientAt(float64(m.frame) / 50.0).Clamped().Hex())
 	card := styleCard.BorderForeground(borderCol).Render(inner)
 

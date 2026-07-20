@@ -2,11 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"whatnext/internal/pick"
 	"whatnext/internal/store"
 )
 
@@ -15,6 +17,8 @@ type browseState struct {
 	cursor      int
 	offset      int
 	watchedOnly bool
+	query       string // live type-to-filter substring
+	filtering   bool   // true while the search box has focus
 }
 
 func newBrowseState(d *store.Data, watchedOnly bool) browseState {
@@ -24,9 +28,17 @@ func newBrowseState(d *store.Data, watchedOnly bool) browseState {
 }
 
 func (b *browseState) rebuild(d *store.Data) {
+	matched := pick.FilterByQuery(d.Titles, b.query)
+	inMatch := make(map[int]bool, len(matched))
+	for _, i := range matched {
+		inMatch[i] = true
+	}
 	b.rows = b.rows[:0]
 	for i, t := range d.Titles {
 		if b.watchedOnly && !t.Watched {
+			continue
+		}
+		if !inMatch[i] {
 			continue
 		}
 		b.rows = append(b.rows, i)
@@ -38,9 +50,21 @@ func (b *browseState) rebuild(d *store.Data) {
 
 func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	b := &m.browse
+	if b.filtering {
+		return m.updateBrowseFilter(msg)
+	}
 	switch msg.String() {
 	case "esc", "backspace", "h", "left":
+		if b.query != "" {
+			b.query = ""
+			b.cursor, b.offset = 0, 0
+			b.rebuild(m.data)
+			return m, nil
+		}
 		m.goTo(scrHome)
+		return m, nil
+	case "/":
+		b.filtering = true
 		return m, nil
 	case "up", "k":
 		if b.cursor > 0 {
@@ -72,6 +96,37 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateBrowseFilter handles keys while the search box has focus: every
+// printable rune is appended to the query and the row list re-filters live.
+func (m model) updateBrowseFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	b := &m.browse
+	switch msg.Type {
+	case tea.KeyEsc:
+		b.filtering = false
+		b.query = ""
+		b.cursor, b.offset = 0, 0
+		b.rebuild(m.data)
+		return m, nil
+	case tea.KeyEnter:
+		b.filtering = false
+		return m, nil
+	case tea.KeyBackspace:
+		if b.query != "" {
+			r := []rune(b.query)
+			b.query = string(r[:len(r)-1])
+			b.cursor, b.offset = 0, 0
+			b.rebuild(m.data)
+		}
+		return m, nil
+	case tea.KeyRunes, tea.KeySpace:
+		b.query += msg.String()
+		b.cursor, b.offset = 0, 0
+		b.rebuild(m.data)
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m model) viewBrowse() string {
 	b := m.browse
 	title := gradientText("Your watchlist", float64(m.frame)/40.0, true)
@@ -81,11 +136,16 @@ func (m model) viewBrowse() string {
 		scope = "watched only"
 	}
 	sub := styleSubtle.Render(fmt.Sprintf("%d shown · %s", len(b.rows), scope))
+	search := m.browseSearchBox()
 
 	if len(b.rows) == 0 {
-		empty := stylePanel.Render(styleSubtle.Render("Nothing here yet. Import a Letterboxd export to fill your pool."))
-		foot := m.footer([2]string{"tab", "toggle watched"}, [2]string{"esc", "back"})
-		return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", empty, "", foot)
+		msg := "Nothing here yet. Import a Letterboxd export to fill your pool."
+		if b.query != "" {
+			msg = "No titles match " + strconv.Quote(b.query) + "."
+		}
+		empty := stylePanel.Render(styleSubtle.Render(msg))
+		foot := m.footer([2]string{"/", "search"}, [2]string{"tab", "toggle watched"}, [2]string{"esc", "back"})
+		return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", empty, "", foot)
 	}
 
 	// Visible window sized to the terminal height. Offset derives purely from
@@ -110,10 +170,28 @@ func (m model) viewBrowse() string {
 	foot := m.footer(
 		[2]string{"↑↓", "move"},
 		[2]string{"w/↵", "toggle watched"},
+		[2]string{"/", "search"},
 		[2]string{"tab", scope2(b.watchedOnly)},
 		[2]string{"esc", "back"},
 	)
-	return lipgloss.JoinVertical(lipgloss.Left, title, sub, "", list, "", scroll, foot)
+	return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", list, "", scroll, foot)
+}
+
+// browseSearchBox renders the live type-to-filter line: an active, cursor-
+// blinking input while focused, a dim placeholder otherwise.
+func (m model) browseSearchBox() string {
+	b := m.browse
+	if b.filtering {
+		cursor := " "
+		if pulse(m.frame, 16) > 0.5 {
+			cursor = "▏"
+		}
+		return styleAccent.Render("/ ") + lipgloss.NewStyle().Foreground(cFg).Render(b.query) + styleAccent.Render(cursor)
+	}
+	if b.query != "" {
+		return styleAccent.Render("/ ") + lipgloss.NewStyle().Foreground(cFg).Render(b.query)
+	}
+	return styleSubtle.Render("/ search…")
 }
 
 func scope2(watchedOnly bool) string {
@@ -124,8 +202,9 @@ func scope2(watchedOnly bool) string {
 }
 
 func (m model) browseViewport() int {
-	// leave room for title, sub, spacing, scroll, footer (~8 lines) + app pad.
-	v := m.height - 10
+	// leave room for title, sub, search box, spacing, scroll, footer (~9
+	// lines) + app pad.
+	v := m.height - 11
 	if v < 3 {
 		v = 3
 	}
@@ -162,8 +241,14 @@ func (m model) browseRow(idx int, selected bool) string {
 		meta = "unenriched"
 	}
 
+	var providerMeta string
+	if len(t.Providers) > 0 {
+		providerMeta = truncate(strings.Join(t.Providers, ", "), 24)
+	}
+
 	nameStyle := lipgloss.NewStyle().Foreground(cFg)
 	metaStyle := lipgloss.NewStyle().Foreground(cSubtle)
+	providerStyle := lipgloss.NewStyle().Foreground(cCyan)
 	marker := "  "
 	if selected {
 		markCol := lipgloss.Color(gradientAt(float64(m.frame) / 30.0).Clamped().Hex())
@@ -174,8 +259,11 @@ func (m model) browseRow(idx int, selected bool) string {
 		marker,
 		status,
 		nameStyle.Width(42).Render(name),
-		metaStyle.Render(meta),
+		metaStyle.Width(32).Render(meta),
 	)
+	if providerMeta != "" {
+		line += "  " + providerStyle.Render(providerMeta)
+	}
 	return line
 }
 

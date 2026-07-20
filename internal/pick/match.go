@@ -37,3 +37,18 @@ func MatchByName(titles []store.Title, query string) []Match {
 	}
 	return fuzzy
 }
+
+// FilterByQuery returns the indices of every title whose name contains query
+// (case-insensitive). An empty query matches everything. Meant for live
+// type-to-filter UIs, where every partial match should show — unlike
+// MatchByName, which narrows to disambiguate a single pick.
+func FilterByQuery(titles []store.Title, query string) []int {
+	q := strings.ToLower(strings.TrimSpace(query))
+	var out []int
+	for i, t := range titles {
+		if q == "" || strings.Contains(strings.ToLower(t.Name), q) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
