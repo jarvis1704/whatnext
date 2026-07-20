@@ -1,10 +1,22 @@
 # whatnext
 
-Pick what to watch next from your Letterboxd watchlist — filtered by genre,
-mood, media type, or runtime. A fast, animated terminal app written in Go.
+<p>
+  <a href="https://github.com/jarvis1704/whatnext/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/jarvis1704/whatnext?color=7c3aed&label=release"></a>
+  <a href="https://github.com/jarvis1704/whatnext/blob/main/LICENSE"><img alt="license" src="https://img.shields.io/github/license/jarvis1704/whatnext?color=blue"></a>
+  <img alt="go version" src="https://img.shields.io/badge/go-1.22%2B-00ADD8?logo=go&logoColor=white">
+  <img alt="platforms" src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey">
+</p>
+
+Stuck scrolling your Letterboxd watchlist every night? **whatnext** picks for
+you — filtered by genre, mood, media type, runtime, or streaming provider —
+in a fast, animated terminal app written in Go.
 
 Run it with **no arguments** for the full-screen interactive TUI, or use the
 classic subcommands for scripting.
+
+<p align="center">
+  <img src="screenshots/reveal.png" width="520" alt="whatnext reveal card showing tonight's pick">
+</p>
 
 ## Install
 
@@ -98,6 +110,29 @@ Requires Go 1.22+. Dependencies are the [Charm](https://charm.sh) TUI stack
 - **🌍 Region** — set the country used for "where to watch" lookups.
 
 Keys: arrows / `j`/`k` to move, `↵` to select, `esc` to go back, `q` to quit.
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="screenshots/tune-pick.png" alt="Tune your pick filters screen"><br>
+      <sub>Tune mood, type, and runtime — watch the match count update live</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="screenshots/browse.png" alt="Browse watchlist screen"><br>
+      <sub>Browse the full pool, live-search, toggle watched</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="screenshots/import-enrich.png" alt="Import and enrichment progress screen"><br>
+      <sub>Import a Letterboxd export and enrich in the background</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="screenshots/reveal.png" alt="Tonight's pick reveal card"><br>
+      <sub>The reveal — reshuffle, mark watched, or head back to filters</sub>
+    </td>
+  </tr>
+</table>
 
 ## Subcommands
 
