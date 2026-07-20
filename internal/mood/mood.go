@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // Defaults are the built-in mood → genre mappings.

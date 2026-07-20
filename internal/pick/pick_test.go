@@ -3,7 +3,7 @@ package pick
 import (
 	"testing"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 func TestCandidatesProviderFilter(t *testing.T) {

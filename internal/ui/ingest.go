@@ -9,9 +9,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/letterboxd"
-	"whatnext/internal/store"
-	"whatnext/internal/tmdb"
+	"github.com/jarvis1704/whatnext/internal/letterboxd"
+	"github.com/jarvis1704/whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // ---- messages ----

@@ -12,9 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/mood"
-	"whatnext/internal/store"
-	"whatnext/internal/tmdb"
+	"github.com/jarvis1704/whatnext/internal/mood"
+	"github.com/jarvis1704/whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // screen identifies which view is active.
@@ -28,6 +28,7 @@ const (
 	scrImport
 	scrProgress
 	scrStats
+	scrRegion
 	scrOnboardKey
 	scrOnboardRegion
 	scrOnboardPath
@@ -38,7 +39,7 @@ const (
 // instead.
 func (m model) isTextEntry() bool {
 	switch m.screen {
-	case scrImport, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
+	case scrImport, scrRegion, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
 		return true
 	case scrBrowse:
 		return m.browse.filtering
@@ -242,6 +243,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateProgress(msg)
 	case scrStats:
 		return m.updateStats(msg)
+	case scrRegion:
+		return m.updateRegion(msg)
 	case scrOnboardKey:
 		return m.updateOnboardKey(msg)
 	case scrOnboardRegion:
@@ -290,6 +293,8 @@ func (m model) View() string {
 		body = m.viewProgress()
 	case scrStats:
 		body = m.viewStats()
+	case scrRegion:
+		body = m.viewRegion()
 	case scrOnboardKey:
 		body = m.viewOnboardKey()
 	case scrOnboardRegion:

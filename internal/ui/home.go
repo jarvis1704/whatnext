@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -21,6 +22,7 @@ func (m model) homeItems() []homeItem {
 		{"📥", "Import export", "Load a Letterboxd .zip or watchlist.csv", scrImport},
 		{"✨", "Refresh enrichment", "Retry TMDb lookups for unenriched titles", scrProgress},
 		{"📊", "Stats", "Genre, decade, and runtime breakdown of your pool", scrStats},
+		{"🌍", "Region", fmt.Sprintf("Country for streaming-provider lookups (currently: %s)", m.region), scrRegion},
 	}
 }
 
@@ -54,6 +56,12 @@ func (m model) chooseHome(it homeItem) (tea.Model, tea.Cmd) {
 		return m.startRefresh()
 	case scrStats:
 		m.goTo(scrStats)
+	case scrRegion:
+		m.regionInput.SetValue(m.region)
+		m.regionInput.CursorEnd()
+		m.regionInput.Focus()
+		m.goTo(scrRegion)
+		return m, textinput.Blink
 	}
 	return m, nil
 }

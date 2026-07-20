@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/mood"
-	"whatnext/internal/pick"
+	"github.com/jarvis1704/whatnext/internal/mood"
+	"github.com/jarvis1704/whatnext/internal/pick"
 )
 
 // filterState is the interactive filter builder backing the pick flow.

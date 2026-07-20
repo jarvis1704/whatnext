@@ -1,4 +1,4 @@
-module whatnext
+module github.com/jarvis1704/whatnext
 
 go 1.26.5
 

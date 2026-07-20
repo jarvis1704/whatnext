@@ -6,8 +6,8 @@ package enrich
 import (
 	"time"
 
-	"whatnext/internal/store"
-	"whatnext/internal/tmdb"
+	"github.com/jarvis1704/whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // politeDelay throttles requests to be a good API citizen (plan §8).

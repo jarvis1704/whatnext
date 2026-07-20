@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"whatnext/internal/pick"
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/pick"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // newTestModel builds a model with a small in-memory pool, bypassing disk.
@@ -34,7 +34,7 @@ func TestScreensRender(t *testing.T) {
 	m := newTestModel(t)
 	m.filter = newFilterState(m.moods)
 
-	screens := []screen{scrHome, scrFilters, scrReveal, scrBrowse, scrImport, scrProgress, scrStats}
+	screens := []screen{scrHome, scrFilters, scrReveal, scrBrowse, scrImport, scrProgress, scrStats, scrRegion}
 	for _, s := range screens {
 		m.screen = s
 		if s == scrBrowse {

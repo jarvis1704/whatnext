@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // ParseWatchlist reads titles from the given path. If path ends in .zip it is

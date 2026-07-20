@@ -11,14 +11,14 @@ import (
 	"os"
 	"strings"
 
-	"whatnext/internal/enrich"
-	"whatnext/internal/letterboxd"
-	"whatnext/internal/mood"
-	"whatnext/internal/pick"
-	"whatnext/internal/stats"
-	"whatnext/internal/store"
-	"whatnext/internal/tmdb"
-	"whatnext/internal/ui"
+	"github.com/jarvis1704/whatnext/internal/enrich"
+	"github.com/jarvis1704/whatnext/internal/letterboxd"
+	"github.com/jarvis1704/whatnext/internal/mood"
+	"github.com/jarvis1704/whatnext/internal/pick"
+	"github.com/jarvis1704/whatnext/internal/stats"
+	"github.com/jarvis1704/whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/tmdb"
+	"github.com/jarvis1704/whatnext/internal/ui"
 )
 
 // tiny ANSI helpers so CLI output has a bit of life without a TUI dependency.
@@ -34,6 +34,10 @@ const (
 )
 
 func c(color, s string) string { return color + s + aReset }
+
+// version is set at build time via -ldflags "-X main.version=..." (GoReleaser
+// injects the git tag). "dev" means a local, non-release build.
+var version = "dev"
 
 func main() {
 	args := os.Args[1:]
@@ -56,12 +60,16 @@ func main() {
 		cmdWatched(args[1:])
 	case "stats":
 		cmdStats(args[1:])
+	case "region":
+		cmdRegion(args[1:])
 	case "refresh":
 		cmdRefresh(args[1:])
 	case "doctor":
 		cmdDoctor(args[1:])
 	case "help", "-h", "--help":
 		usage()
+	case "version", "-v", "--version":
+		fmt.Printf("whatnext %s\n", version)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", args[0])
 		usage()
@@ -79,8 +87,10 @@ func usage() {
   whatnext list [--watched] [--on <provider>]   print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
   whatnext stats                    genre/decade/runtime breakdown of your pool
+  whatnext region [<code>]          show or set the streaming region (e.g. US, IN, GB)
   whatnext refresh                  retry TMDb enrichment for unenriched titles
   whatnext doctor                   check key, DNS, TMDb reachability & pool
+  whatnext version                  print the version
 
 %s
   --genre <name>        filter to a single genre
@@ -529,6 +539,57 @@ func printBars(labels []string, counts []int, color string) {
 		bar := strings.Repeat("█", filled)
 		fmt.Printf("  %-*s %s %s\n", labelWidth, labels[i], c(color, bar), c(aDim, fmt.Sprintf("%d", n)))
 	}
+}
+
+// ---- region ----
+
+// cmdRegion shows or sets the watch-provider region. Existing users who
+// completed onboarding before this setting existed (or just want to change
+// it) don't need to re-onboard — this is the standalone entry point, and the
+// TUI has a matching "Region" item on the home menu.
+func cmdRegion(args []string) {
+	fs := flag.NewFlagSet("region", flag.ExitOnError)
+	fs.Parse(args)
+
+	if fs.NArg() == 0 {
+		region := store.ResolveRegion()
+		src := "config"
+		if os.Getenv("WHATNEXT_REGION") != "" {
+			src = "env"
+		}
+		fmt.Printf("%s %s\n", c(aBold+aGold, region), c(aDim, fmt.Sprintf("(from %s)", src)))
+		fmt.Println(c(aDim, "Set a new one: whatnext region <CODE>   e.g. whatnext region IN"))
+		return
+	}
+
+	code := strings.ToUpper(strings.TrimSpace(fs.Arg(0)))
+	if len(code) != 2 || !isAlpha(code) {
+		fail(fmt.Errorf("region must be a two-letter country code, e.g. US, IN, GB — got %q", fs.Arg(0)))
+	}
+
+	cfg, err := store.LoadConfig()
+	if err != nil {
+		fail(err)
+	}
+	prev := store.ResolveRegion()
+	cfg.Region = code
+	if err := cfg.Save(); err != nil {
+		fail(err)
+	}
+
+	fmt.Printf("%s Region set to %s.\n", c(aGreen, "✓"), c(aBold+aGold, code))
+	if code != prev {
+		fmt.Println(c(aDim, "  Run: whatnext refresh   — to update cached streaming-provider data"))
+	}
+}
+
+func isAlpha(s string) bool {
+	for _, r := range s {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- watched ----

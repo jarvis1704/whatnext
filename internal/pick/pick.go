@@ -6,7 +6,7 @@ import (
 	"math/rand"
 	"strings"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // Filter describes the constraints a picked title must satisfy. Zero values

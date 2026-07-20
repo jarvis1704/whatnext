@@ -3,7 +3,7 @@ package stats
 import (
 	"testing"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 func TestComputeEmpty(t *testing.T) {

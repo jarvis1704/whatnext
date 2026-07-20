@@ -3,7 +3,7 @@ package pick
 import (
 	"strings"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // Match couples a pool index with its title for disambiguation UIs.

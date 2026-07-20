@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strconv"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 // GenreCount is a single genre's occurrence count across the pool.

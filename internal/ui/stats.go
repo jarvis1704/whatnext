@@ -7,7 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/stats"
+	"github.com/jarvis1704/whatnext/internal/stats"
 )
 
 func (m model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

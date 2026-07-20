@@ -6,9 +6,31 @@ mood, media type, or runtime. A fast, animated terminal app written in Go.
 Run it with **no arguments** for the full-screen interactive TUI, or use the
 classic subcommands for scripting.
 
-## Build
+## Install
+
+**Download a binary** — grab the archive for your OS/arch from the
+[latest release](https://github.com/jarvis1704/whatnext/releases/latest),
+extract it, and put `whatnext` somewhere on your `PATH`:
 
 ```bash
+# example: Linux/amd64 — swap linux_amd64 for darwin_amd64, darwin_arm64,
+# linux_arm64, or windows_amd64 (as a .zip) as needed
+curl -sSL https://github.com/jarvis1704/whatnext/releases/latest/download/whatnext_linux_amd64.tar.gz \
+  | tar -xz whatnext
+sudo mv whatnext /usr/local/bin/
+```
+
+**With Go installed:**
+
+```bash
+go install github.com/jarvis1704/whatnext@latest
+```
+
+**From source:**
+
+```bash
+git clone https://github.com/jarvis1704/whatnext.git
+cd whatnext
 go build -o whatnext .
 ```
 
@@ -32,12 +54,15 @@ Requires Go 1.22+. Dependencies are the [Charm](https://charm.sh) TUI stack
 ./whatnext
 ```
 
-- **🎲 Pick something** — tune mood / type / runtime, then a slot-machine
-  reveal lands on a random unwatched title.
-- **🗂 Browse pool** — scroll your watchlist, toggle watched with `w`.
+- **🎲 Pick something** — tune mood / type / runtime / streaming provider,
+  then a slot-machine reveal lands on a random unwatched title.
+- **🗂 Browse pool** — scroll your watchlist, `/` to live-search by name,
+  toggle watched with `w`.
 - **📥 Import export** — point it at a `.zip` or `watchlist.csv`.
 - **✨ Refresh enrichment** — retry TMDb lookups for unenriched titles, with a
   live progress bar.
+- **📊 Stats** — genre breakdown, decade histogram, avg runtime.
+- **🌍 Region** — set the country used for "where to watch" lookups.
 
 Keys: arrows / `j`/`k` to move, `↵` to select, `esc` to go back, `q` to quit.
 
@@ -47,8 +72,11 @@ Keys: arrows / `j`/`k` to move, `↵` to select, `esc` to go back, `q` to quit.
 ./whatnext import ~/Downloads/letterboxd-export.zip
 ./whatnext pick --mood intense --max-runtime 120
 ./whatnext pick --genre Thriller --type movie
-./whatnext list [--watched]
+./whatnext pick --on Netflix
+./whatnext list [--watched] [--on <provider>]
 ./whatnext watched "Paddington 2"
+./whatnext stats
+./whatnext region [<code>]
 ./whatnext refresh
 ./whatnext doctor
 ```

@@ -1,0 +1,67 @@
+version: 2
+
+project_name: whatnext
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: whatnext
+    main: .
+    binary: whatnext
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # No version in the name, so /releases/latest/download/<name> is a stable
+    # URL across releases (see README install instructions).
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: jarvis1704
+    name: whatnext
+  header: |
+    ## whatnext {{ .Tag }}
+
+    Pick what to watch next from your Letterboxd watchlist. See the
+    [README](https://github.com/jarvis1704/whatnext#readme) for setup.

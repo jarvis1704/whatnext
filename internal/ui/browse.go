@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/pick"
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/pick"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 type browseState struct {

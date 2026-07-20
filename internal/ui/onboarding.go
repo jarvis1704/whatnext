@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"whatnext/internal/store"
-	"whatnext/internal/tmdb"
+	"github.com/jarvis1704/whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // ---- step 1: TMDb API key ----
@@ -119,13 +119,71 @@ func (m model) viewOnboardRegion() string {
 	)
 	panel := stylePanel.Render(body)
 
-	note := styleSubtle.Render("Stored locally at ~/.whatnext/config.json. Change it anytime by editing that file.")
+	note := styleSubtle.Render("Stored locally at ~/.whatnext/config.json — change it later from the home menu.")
 	foot := m.footer(
 		[2]string{"↵", "save & continue"},
 		[2]string{"esc", "use " + store.DefaultRegion},
 		[2]string{"ctrl+c", "quit"},
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, welcome, "", step, "", panel, "", note, "", foot)
+}
+
+// ---- region (post-onboarding, from the home menu) ----
+
+// updateRegion handles the standalone "Region" home-menu screen: same field
+// as onboarding, but saving here returns to home and — if the region
+// actually changed and a TMDb key is available — immediately kicks off a
+// refresh so cached watch-provider data catches up to the new region.
+func (m model) updateRegion(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.regionInput.Blur()
+		m.goTo(scrHome)
+		return m, nil
+	case "enter":
+		r := strings.ToUpper(strings.TrimSpace(m.regionInput.Value()))
+		if r == "" {
+			r = store.DefaultRegion
+		}
+		changed := r != m.region
+		m.saveRegion(r)
+		m.regionInput.Blur()
+
+		if !changed {
+			m.flash = "Region already set to " + r + "."
+			m.goTo(scrHome)
+			return m, nil
+		}
+		if m.tmdb == nil {
+			m.flash = "Region set to " + r + ". Add a TMDb key, then Refresh to update streaming data."
+			m.goTo(scrHome)
+			return m, nil
+		}
+		return m.startRefresh()
+	}
+	var cmd tea.Cmd
+	m.regionInput, cmd = m.regionInput.Update(msg)
+	return m, cmd
+}
+
+func (m model) viewRegion() string {
+	title := gradientText("Streaming region", float64(m.frame)/40.0, true)
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		styleSubtle.Render("Two-letter country code for \"where to watch\" filters,"),
+		styleSubtle.Render("e.g. US, IN, GB, CA. Changing it refreshes cached streaming data."),
+		"",
+		m.regionInput.View(),
+	)
+	panel := stylePanel.Render(body)
+
+	current := styleSubtle.Render("currently: ") + styleAccent.Render(m.region)
+
+	foot := m.footer(
+		[2]string{"↵", "save"},
+		[2]string{"esc", "cancel"},
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, title, "", current, "", panel, "", foot)
 }
 
 // ---- step 3: Letterboxd watchlist ----

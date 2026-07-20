@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"whatnext/internal/store"
+	"github.com/jarvis1704/whatnext/internal/store"
 )
 
 func TestFilterByQuery(t *testing.T) {
