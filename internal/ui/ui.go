@@ -27,6 +27,7 @@ const (
 	scrBrowse
 	scrImport
 	scrProgress
+	scrStats
 	scrOnboardKey
 	scrOnboardPath
 )
@@ -221,6 +222,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateImport(msg)
 	case scrProgress:
 		return m.updateProgress(msg)
+	case scrStats:
+		return m.updateStats(msg)
 	case scrOnboardKey:
 		return m.updateOnboardKey(msg)
 	case scrOnboardPath:
@@ -265,6 +268,8 @@ func (m model) View() string {
 		body = m.viewImport()
 	case scrProgress:
 		body = m.viewProgress()
+	case scrStats:
+		body = m.viewStats()
 	case scrOnboardKey:
 		body = m.viewOnboardKey()
 	case scrOnboardPath:

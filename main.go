@@ -15,6 +15,7 @@ import (
 	"whatnext/internal/letterboxd"
 	"whatnext/internal/mood"
 	"whatnext/internal/pick"
+	"whatnext/internal/stats"
 	"whatnext/internal/store"
 	"whatnext/internal/tmdb"
 	"whatnext/internal/ui"
@@ -53,6 +54,8 @@ func main() {
 		cmdList(args[1:])
 	case "watched":
 		cmdWatched(args[1:])
+	case "stats":
+		cmdStats(args[1:])
 	case "refresh":
 		cmdRefresh(args[1:])
 	case "doctor":
@@ -75,6 +78,7 @@ func usage() {
   whatnext pick [flags]             random pick from your unwatched pool
   whatnext list [--watched]         print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
+  whatnext stats                    genre/decade/runtime breakdown of your pool
   whatnext refresh                  retry TMDb enrichment for unenriched titles
   whatnext doctor                   check key, DNS, TMDb reachability & pool
 
@@ -400,6 +404,101 @@ func cmdList(args []string) {
 	}
 	if shown == 0 {
 		fmt.Println(c(aDim, "Nothing to show. Run: whatnext import <path>"))
+	}
+}
+
+// ---- stats ----
+
+func cmdStats(_ []string) {
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	s := stats.Compute(data.Titles)
+
+	if s.Total == 0 {
+		fmt.Println(c(aDim, "Nothing to show. Run: whatnext import <path>"))
+		return
+	}
+
+	fmt.Println(c(aBold+aGold, "whatnext stats"))
+	fmt.Println()
+
+	pct := 0
+	if s.Total > 0 {
+		pct = s.Watched * 100 / s.Total
+	}
+	fmt.Printf("  %-16s %d titles · %s watched (%d%%) · %s unwatched\n",
+		"Pool", s.Total, c(aGreen, fmt.Sprintf("%d", s.Watched)), pct, c(aAmber, fmt.Sprintf("%d", s.Unwatched)))
+	if s.Unenriched > 0 {
+		fmt.Printf("  %-16s %s\n", "", c(aDim, fmt.Sprintf("%d not yet enriched", s.Unenriched)))
+	}
+	fmt.Printf("  %-16s %d movies · %d tv\n", "Media", s.MovieCount, s.TVCount)
+	if s.RuntimeSamples > 0 {
+		fmt.Printf("  %-16s %d min avg  %s\n", "Runtime", s.AvgRuntimeMins, c(aDim, fmt.Sprintf("(%d titles)", s.RuntimeSamples)))
+	}
+
+	if len(s.Genres) > 0 {
+		fmt.Println()
+		fmt.Println(c(aViolet, "GENRES"))
+		printBars(genreBarLabels(s.Genres), genreBarCounts(s.Genres), aCyanBar())
+	}
+
+	if len(s.Decades) > 0 {
+		fmt.Println()
+		fmt.Println(c(aViolet, "DECADES"))
+		labels := make([]string, len(s.Decades))
+		counts := make([]int, len(s.Decades))
+		for i, d := range s.Decades {
+			labels[i] = fmt.Sprintf("%ds", d.Decade)
+			counts[i] = d.Count
+		}
+		printBars(labels, counts, aGold)
+	}
+}
+
+func genreBarLabels(gs []stats.GenreCount) []string {
+	out := make([]string, len(gs))
+	for i, g := range gs {
+		out[i] = g.Genre
+	}
+	return out
+}
+
+func genreBarCounts(gs []stats.GenreCount) []int {
+	out := make([]int, len(gs))
+	for i, g := range gs {
+		out[i] = g.Count
+	}
+	return out
+}
+
+func aCyanBar() string { return "\033[38;5;80m" }
+
+// printBars renders a horizontal ASCII bar chart, scaled so the largest count
+// fills barWidth cells.
+func printBars(labels []string, counts []int, color string) {
+	const barWidth = 30
+	max := 0
+	labelWidth := 0
+	for i, n := range counts {
+		if n > max {
+			max = n
+		}
+		if len(labels[i]) > labelWidth {
+			labelWidth = len(labels[i])
+		}
+	}
+	if max == 0 {
+		return
+	}
+	for i, n := range counts {
+		filled := n * barWidth / max
+		if filled == 0 && n > 0 {
+			filled = 1
+		}
+		bar := strings.Repeat("█", filled)
+		fmt.Printf("  %-*s %s %s\n", labelWidth, labels[i], c(color, bar), c(aDim, fmt.Sprintf("%d", n)))
 	}
 }
 

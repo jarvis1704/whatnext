@@ -34,7 +34,7 @@ func TestScreensRender(t *testing.T) {
 	m := newTestModel(t)
 	m.filter = newFilterState(m.moods)
 
-	screens := []screen{scrHome, scrFilters, scrReveal, scrBrowse, scrImport, scrProgress}
+	screens := []screen{scrHome, scrFilters, scrReveal, scrBrowse, scrImport, scrProgress, scrStats}
 	for _, s := range screens {
 		m.screen = s
 		if s == scrBrowse {

@@ -20,6 +20,7 @@ func (m model) homeItems() []homeItem {
 		{"🗂", "Browse pool", "Scroll your watchlist, mark titles watched", scrBrowse},
 		{"📥", "Import export", "Load a Letterboxd .zip or watchlist.csv", scrImport},
 		{"✨", "Refresh enrichment", "Retry TMDb lookups for unenriched titles", scrProgress},
+		{"📊", "Stats", "Genre, decade, and runtime breakdown of your pool", scrStats},
 	}
 }
 
@@ -51,6 +52,8 @@ func (m model) chooseHome(it homeItem) (tea.Model, tea.Cmd) {
 		m.goTo(scrImport)
 	case scrProgress:
 		return m.startRefresh()
+	case scrStats:
+		m.goTo(scrStats)
 	}
 	return m, nil
 }
