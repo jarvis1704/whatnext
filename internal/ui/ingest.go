@@ -202,6 +202,8 @@ func (m model) updateEnrichStep(msg enrichStepMsg) (tea.Model, tea.Cmd) {
 		t.MediaType = msg.res.MediaType
 		t.Genres = msg.res.Genres
 		t.RuntimeMins = msg.res.RuntimeMins
+		t.VoteAverage = msg.res.VoteAverage
+		t.Popularity = msg.res.Popularity
 		t.Enriched = true
 		if msg.provErr == nil {
 			t.Providers = msg.providers

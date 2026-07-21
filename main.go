@@ -105,6 +105,7 @@ func usage() {
   --type <movie|tv>     filter by media type
   --max-runtime <min>   cap runtime in minutes
   --on <provider>       filter to a streaming provider, e.g. Netflix
+  --min-rating <score>  minimum TMDb rating, 0-10
   --weighted            favor titles that have sat unwatched the longest
 
 %s
@@ -349,6 +350,7 @@ func cmdPick(args []string) {
 	mediaType := fs.String("type", "", "media type: movie|tv")
 	maxRuntime := fs.Int("max-runtime", 0, "max runtime in minutes")
 	provider := fs.String("on", "", "streaming provider filter, e.g. Netflix")
+	minRating := fs.Float64("min-rating", 0, "minimum TMDb rating (0-10)")
 	weighted := fs.Bool("weighted", false, "favor titles that have sat unwatched the longest")
 	fs.Parse(args)
 
@@ -356,7 +358,7 @@ func cmdPick(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider}
+	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider, MinRating: *minRating}
 	if *moodName != "" {
 		cfg, err := mood.Load()
 		if err != nil {
@@ -393,6 +395,9 @@ func printPick(t store.Title) {
 	}
 	if t.RuntimeMins > 0 {
 		meta = append(meta, fmt.Sprintf("%d min", t.RuntimeMins))
+	}
+	if t.VoteAverage > 0 {
+		meta = append(meta, fmt.Sprintf("★ %.1f", t.VoteAverage))
 	}
 	if len(t.Providers) > 0 {
 		meta = append(meta, "streaming on "+strings.Join(t.Providers, ", "))
@@ -471,6 +476,9 @@ func cmdList(args []string) {
 			meta = c(aDim, "  "+strings.Join(t.Genres, ", "))
 			if t.RuntimeMins > 0 {
 				meta += c(aDim, fmt.Sprintf(" · %dm", t.RuntimeMins))
+			}
+			if t.VoteAverage > 0 {
+				meta += c(aDim, fmt.Sprintf(" · ★%.1f", t.VoteAverage))
 			}
 		}
 		if len(t.Providers) > 0 {

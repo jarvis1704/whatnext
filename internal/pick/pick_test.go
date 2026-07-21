@@ -21,6 +21,19 @@ func TestCandidatesProviderFilter(t *testing.T) {
 	}
 }
 
+func TestCandidatesMinRating(t *testing.T) {
+	titles := []store.Title{
+		{Name: "A", Enriched: true, VoteAverage: 8.1},
+		{Name: "B", Enriched: true, VoteAverage: 5.0},
+		{Name: "C", Enriched: true}, // unrated
+	}
+
+	got := Candidates(titles, Filter{MinRating: 7})
+	if len(got) != 1 || got[0].Name != "A" {
+		t.Fatalf("Candidates(MinRating=7) = %+v, want just A", got)
+	}
+}
+
 func TestWeightedEmpty(t *testing.T) {
 	if _, ok := Weighted(nil); ok {
 		t.Fatal("Weighted(nil) should report ok=false")

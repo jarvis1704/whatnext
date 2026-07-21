@@ -46,6 +46,8 @@ func Run(d *store.Data, c *tmdb.Client, region string, onProgress func(Progress)
 				t.MediaType = res.MediaType
 				t.Genres = res.Genres
 				t.RuntimeMins = res.RuntimeMins
+				t.VoteAverage = res.VoteAverage
+				t.Popularity = res.Popularity
 				t.Enriched = true
 				p.Found = true
 				fetchProviders(c, t, region)

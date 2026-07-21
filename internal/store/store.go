@@ -22,6 +22,8 @@ type Title struct {
 	RuntimeMins   int      `json:"runtime_mins"`
 	Enriched      bool     `json:"enriched"`
 	Watched       bool     `json:"watched"`
+	VoteAverage   float64  `json:"vote_average,omitempty"` // TMDb rating, 0-10
+	Popularity    float64  `json:"popularity,omitempty"`   // TMDb popularity score
 
 	// AddedAt is when this title entered the whatnext pool, set the moment
 	// Upsert first accepts it. Used by --weighted picks to favor titles

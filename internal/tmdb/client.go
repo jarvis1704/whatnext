@@ -64,6 +64,8 @@ type Result struct {
 	MediaType   string // "movie" | "tv"
 	Genres      []string
 	RuntimeMins int
+	VoteAverage float64 // TMDb rating, 0-10
+	Popularity  float64 // TMDb popularity score
 }
 
 type searchResp struct {
@@ -76,8 +78,10 @@ type detailResp struct {
 	Genres []struct {
 		Name string `json:"name"`
 	} `json:"genres"`
-	Runtime         int   `json:"runtime"`          // movie
-	EpisodeRuntimes []int `json:"episode_run_time"` // tv
+	Runtime         int     `json:"runtime"`          // movie
+	EpisodeRuntimes []int   `json:"episode_run_time"` // tv
+	VoteAverage     float64 `json:"vote_average"`
+	Popularity      float64 `json:"popularity"`
 }
 
 // Lookup resolves a title to genre/runtime/media-type. It tries a
@@ -141,6 +145,8 @@ func (c *Client) movieDetails(id int) (Result, bool, error) {
 		MediaType:   "movie",
 		Genres:      genreNames(dr),
 		RuntimeMins: dr.Runtime,
+		VoteAverage: dr.VoteAverage,
+		Popularity:  dr.Popularity,
 	}, true, nil
 }
 
@@ -158,6 +164,8 @@ func (c *Client) tvDetails(id int) (Result, bool, error) {
 		MediaType:   "tv",
 		Genres:      genreNames(dr),
 		RuntimeMins: rt,
+		VoteAverage: dr.VoteAverage,
+		Popularity:  dr.Popularity,
 	}, true, nil
 }
 

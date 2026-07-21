@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,12 +14,13 @@ import (
 )
 
 type browseState struct {
-	rows        []int // indices into data.Titles
-	cursor      int
-	offset      int
-	watchedOnly bool
-	query       string // live type-to-filter substring
-	filtering   bool   // true while the search box has focus
+	rows         []int // indices into data.Titles
+	cursor       int
+	offset       int
+	watchedOnly  bool
+	sortByRating bool
+	query        string // live type-to-filter substring
+	filtering    bool   // true while the search box has focus
 }
 
 func newBrowseState(d *store.Data, watchedOnly bool) browseState {
@@ -42,6 +44,11 @@ func (b *browseState) rebuild(d *store.Data) {
 			continue
 		}
 		b.rows = append(b.rows, i)
+	}
+	if b.sortByRating {
+		sort.SliceStable(b.rows, func(i, j int) bool {
+			return d.Titles[b.rows[i]].VoteAverage > d.Titles[b.rows[j]].VoteAverage
+		})
 	}
 	if b.cursor >= len(b.rows) {
 		b.cursor = max(0, len(b.rows)-1)
@@ -80,6 +87,11 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		b.cursor = max(0, len(b.rows)-1)
 	case "tab":
 		b.watchedOnly = !b.watchedOnly
+		b.cursor = 0
+		b.offset = 0
+		b.rebuild(m.data)
+	case "s":
+		b.sortByRating = !b.sortByRating
 		b.cursor = 0
 		b.offset = 0
 		b.rebuild(m.data)
@@ -141,6 +153,9 @@ func (m model) viewBrowse() string {
 	if b.watchedOnly {
 		scope = "watched only"
 	}
+	if b.sortByRating {
+		scope += " · sorted by rating"
+	}
 	sub := styleSubtle.Render(fmt.Sprintf("%d shown · %s", len(b.rows), scope))
 	search := m.browseSearchBox()
 
@@ -150,7 +165,7 @@ func (m model) viewBrowse() string {
 			msg = "No titles match " + strconv.Quote(b.query) + "."
 		}
 		empty := stylePanel.Render(styleSubtle.Render(msg))
-		foot := m.footer([2]string{"/", "search"}, [2]string{"tab", "toggle watched"}, [2]string{"u", "undo"}, [2]string{"esc", "back"})
+		foot := m.footer([2]string{"/", "search"}, [2]string{"tab", "toggle watched"}, [2]string{"s", "sort by rating"}, [2]string{"u", "undo"}, [2]string{"esc", "back"})
 		return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", empty, "", foot)
 	}
 
@@ -178,6 +193,7 @@ func (m model) viewBrowse() string {
 		[2]string{"w/↵", "toggle watched"},
 		[2]string{"/", "search"},
 		[2]string{"tab", scope2(b.watchedOnly)},
+		[2]string{"s", sortLabel(b.sortByRating)},
 		[2]string{"esc", "back"},
 	)
 	return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", list, "", scroll, foot)
@@ -205,6 +221,13 @@ func scope2(watchedOnly bool) string {
 		return "show all"
 	}
 	return "watched only"
+}
+
+func sortLabel(sortByRating bool) string {
+	if sortByRating {
+		return "unsort"
+	}
+	return "sort by rating"
 }
 
 func (m model) browseViewport() int {
@@ -242,6 +265,9 @@ func (m model) browseRow(idx int, selected bool) string {
 		meta = truncate(strings.Join(t.Genres, ", "), 30)
 		if t.RuntimeMins > 0 {
 			meta += fmt.Sprintf(" · %dm", t.RuntimeMins)
+		}
+		if t.VoteAverage > 0 {
+			meta += fmt.Sprintf(" · ★%.1f", t.VoteAverage)
 		}
 	} else if !t.Enriched {
 		meta = "unenriched"

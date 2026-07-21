@@ -18,11 +18,12 @@ type Filter struct {
 	MediaType  string   // "movie" | "tv"
 	MaxRuntime int      // minutes; 0 = no cap
 	Provider   string   // streaming provider name (case-insensitive), e.g. "Netflix"
+	MinRating  float64  // minimum TMDb vote average (0-10); 0 = no floor
 }
 
 // Active reports whether any constraint is set.
 func (f Filter) Active() bool {
-	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 || f.Provider != ""
+	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 || f.Provider != "" || f.MinRating > 0
 }
 
 // Candidates returns every unwatched title matching f. When a genre or mood
@@ -65,6 +66,9 @@ func matches(t store.Title, f Filter) bool {
 		if !hasGenre(t.Providers, f.Provider) { // same case-insensitive membership check
 			return false
 		}
+	}
+	if f.MinRating > 0 && t.VoteAverage < f.MinRating {
+		return false
 	}
 	return true
 }
