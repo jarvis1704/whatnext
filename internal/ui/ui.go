@@ -36,15 +36,17 @@ const (
 	scrOnboardPath
 )
 
-// isTextEntry reports whether the active screen has a focused text input,
-// where the "q" global-quit shortcut must be treated as literal input
-// instead.
+// isTextEntry reports whether the active screen has a focused text input or
+// single-key picker, where the "q" global-quit shortcut must be treated as
+// literal input instead.
 func (m model) isTextEntry() bool {
 	switch m.screen {
 	case scrImport, scrMinutes, scrRegion, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
 		return true
 	case scrBrowse:
-		return m.browse.filtering
+		return m.browse.filtering || m.browse.openMenu
+	case scrReveal:
+		return m.reveal.openMenu
 	}
 	return false
 }

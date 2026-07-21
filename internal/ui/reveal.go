@@ -28,6 +28,9 @@ type revealState struct {
 	displayIdx int         // which candidate name is flashing now
 	result     store.Title // final pick
 	landedAt   int         // frame the result locked in (for fade-in)
+
+	openMenu bool   // true while the "open: l/t/y" picker has focus
+	openMsg  string // status line from the last open attempt
 }
 
 type revealTickMsg struct{}
@@ -84,6 +87,9 @@ func (m model) updateRevealTick() (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.reveal.openMenu {
+		return m.chooseRevealOpenTarget(msg.String())
+	}
 	switch msg.String() {
 	case "esc", "backspace", "h", "left":
 		m.goTo(m.prev)
@@ -97,8 +103,23 @@ func (m model) updateReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.startRevealWithFilter(m.reveal.usedFilter)
 	case "w": // mark this pick watched
 		return m.markWatchedURI(m.reveal.result.LetterboxdURI)
+	case "o": // open on Letterboxd / TMDb / YouTube trailer
+		m.reveal.openMenu = true
+		m.reveal.openMsg = ""
+		return m, nil
 	case "u": // undo the last watched change
 		return m.undoLastWatched()
+	}
+	return m, nil
+}
+
+// chooseRevealOpenTarget handles a keypress while the "open" picker is
+// focused: l/t/y opens the corresponding link, anything else (esc included)
+// just dismisses the picker.
+func (m model) chooseRevealOpenTarget(key string) (tea.Model, tea.Cmd) {
+	m.reveal.openMenu = false
+	if label, u, ok := resolveOpenTarget(m.reveal.result, key); ok {
+		m.reveal.openMsg = openTarget(label, u)
 	}
 	return m, nil
 }
@@ -238,18 +259,25 @@ func (m model) viewLanded() string {
 	card := styleCard.BorderForeground(borderCol).Render(inner)
 
 	var status string
-	if t.Watched {
+	switch {
+	case m.reveal.openMsg != "":
+		status = styleSubtle.Render(m.reveal.openMsg)
+	case t.Watched:
 		status = styleGood.Render("✓ marked watched")
 	}
 
 	foot := m.footer(
 		[2]string{"↵/r", "reshuffle"},
 		[2]string{"w", "mark watched"},
+		[2]string{"o", "open"},
 		[2]string{"u", "undo"},
 		[2]string{"esc", "back"},
 	)
 	blocks := []string{card, ""}
-	if status != "" {
+	switch {
+	case m.reveal.openMenu:
+		blocks = append(blocks, openMenuBox(), "")
+	case status != "":
 		blocks = append(blocks, status, "")
 	}
 	blocks = append(blocks, foot)

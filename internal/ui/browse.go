@@ -21,6 +21,9 @@ type browseState struct {
 	sortByRating bool
 	query        string // live type-to-filter substring
 	filtering    bool   // true while the search box has focus
+
+	openMenu bool   // true while the "open: l/t/y" picker has focus
+	openMsg  string // status line from the last open attempt
 }
 
 func newBrowseState(d *store.Data, watchedOnly bool) browseState {
@@ -60,6 +63,9 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if b.filtering {
 		return m.updateBrowseFilter(msg)
 	}
+	if b.openMenu {
+		return m.chooseBrowseOpenTarget(msg.String())
+	}
 	switch msg.String() {
 	case "esc", "backspace", "h", "left":
 		if b.query != "" {
@@ -95,6 +101,11 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		b.cursor = 0
 		b.offset = 0
 		b.rebuild(m.data)
+	case "o":
+		if len(b.rows) > 0 {
+			b.openMenu = true
+			b.openMsg = ""
+		}
 	case "w", "enter", " ":
 		if len(b.rows) > 0 {
 			idx := b.rows[b.cursor]
@@ -110,6 +121,22 @@ func (m model) updateBrowse(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m2 := mm.(model)
 		m2.browse.rebuild(m2.data)
 		return m2, cmd
+	}
+	return m, nil
+}
+
+// chooseBrowseOpenTarget handles a keypress while the "open" picker is
+// focused: l/t/y opens the corresponding link for the selected row,
+// anything else (esc included) just dismisses the picker.
+func (m model) chooseBrowseOpenTarget(key string) (tea.Model, tea.Cmd) {
+	b := &m.browse
+	b.openMenu = false
+	if len(b.rows) == 0 {
+		return m, nil
+	}
+	t := m.data.Titles[b.rows[b.cursor]]
+	if label, u, ok := resolveOpenTarget(t, key); ok {
+		b.openMsg = openTarget(label, u)
 	}
 	return m, nil
 }
@@ -194,9 +221,18 @@ func (m model) viewBrowse() string {
 		[2]string{"/", "search"},
 		[2]string{"tab", scope2(b.watchedOnly)},
 		[2]string{"s", sortLabel(b.sortByRating)},
+		[2]string{"o", "open"},
 		[2]string{"esc", "back"},
 	)
-	return lipgloss.JoinVertical(lipgloss.Left, title, sub, search, "", list, "", scroll, foot)
+	blocks := []string{title, sub, search, "", list, "", scroll}
+	switch {
+	case b.openMenu:
+		blocks = append(blocks, openMenuBox())
+	case b.openMsg != "":
+		blocks = append(blocks, styleSubtle.Render(b.openMsg))
+	}
+	blocks = append(blocks, foot)
+	return lipgloss.JoinVertical(lipgloss.Left, blocks...)
 }
 
 // browseSearchBox renders the live type-to-filter line: an active, cursor-
