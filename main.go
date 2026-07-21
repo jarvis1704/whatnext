@@ -57,6 +57,8 @@ func main() {
 		cmdPick(args[1:])
 	case "minutes":
 		cmdMinutes(args[1:])
+	case "double":
+		cmdDouble(args[1:])
 	case "list":
 		cmdList(args[1:])
 	case "watched":
@@ -90,6 +92,7 @@ func usage() {
   whatnext import <path>            import a Letterboxd .zip or watchlist.csv
   whatnext pick [flags]             random pick from your unwatched pool
   whatnext minutes <n>              instant pick that fits in n minutes
+  whatnext double [n]               two unwatched titles fitting an n-min budget
   whatnext list [--watched] [--on <provider>]   print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
   whatnext undo                     unmark the last watched change
@@ -454,6 +457,46 @@ func cmdMinutes(args []string) {
 		os.Exit(1)
 	}
 	printPick(t)
+}
+
+// ---- double ----
+
+// cmdDouble picks two unwatched titles whose combined runtime fits within an
+// optional budget, for planning a back-to-back movie night.
+func cmdDouble(args []string) {
+	fs := flag.NewFlagSet("double", flag.ExitOnError)
+	fs.Parse(args)
+
+	budget := 0
+	if fs.NArg() >= 1 {
+		n, err := strconv.Atoi(strings.TrimSpace(fs.Arg(0)))
+		if err != nil || n <= 0 {
+			fail(fmt.Errorf("minutes must be a positive whole number, got %q", fs.Arg(0)))
+		}
+		budget = n
+	}
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	cands := pick.Candidates(data.Titles, pick.Filter{})
+	a, b, ok := pick.DoubleFeature(cands, budget)
+	if !ok {
+		if budget > 0 {
+			fmt.Println(c(aAmber, fmt.Sprintf("No pair of unwatched titles fits together in %d minutes.", budget)))
+			fmt.Println(c(aDim, "Try a bigger budget, or import more titles."))
+		} else {
+			fmt.Println(c(aAmber, "Need at least two unwatched titles with a known runtime."))
+			fmt.Println(c(aDim, "Run whatnext refresh to enrich the pool first."))
+		}
+		os.Exit(1)
+	}
+	fmt.Println(c(aBold+aGold, "🍿 Double feature"))
+	printPick(a)
+	printPick(b)
+	total := a.RuntimeMins + b.RuntimeMins
+	fmt.Println(c(aDim, fmt.Sprintf("combined runtime: %d min", total)))
 }
 
 // ---- list ----

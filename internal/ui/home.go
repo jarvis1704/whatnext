@@ -19,6 +19,7 @@ func (m model) homeItems() []homeItem {
 	return []homeItem{
 		{"🎲", "Pick something", "Random pick, optionally by mood or filters", scrFilters},
 		{"⏱", "I have X minutes", "Runtime budget → instant pick", scrMinutes},
+		{"🍿", "Double feature", "Two titles that together fit a time budget", scrDouble},
 		{"🗂", "Browse pool", "Scroll your watchlist, mark titles watched", scrBrowse},
 		{"📥", "Import export", "Load a Letterboxd .zip or watchlist.csv", scrImport},
 		{"✨", "Refresh enrichment", "Retry TMDb lookups for unenriched titles", scrProgress},
@@ -50,6 +51,13 @@ func (m model) chooseHome(it homeItem) (tea.Model, tea.Cmd) {
 		m.minutesInput.Focus()
 		m.minutesErr = ""
 		m.goTo(scrMinutes)
+		return m, textinput.Blink
+	case scrDouble:
+		m.doubleInput.Reset()
+		m.doubleInput.Focus()
+		m.doubleErr = ""
+		m.double = doubleState{phase: dblEntry, openIdx: -1}
+		m.goTo(scrDouble)
 		return m, textinput.Blink
 	case scrBrowse:
 		m.browse = newBrowseState(m.data, false)

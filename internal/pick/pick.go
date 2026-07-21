@@ -131,3 +131,29 @@ func Weighted(candidates []store.Title) (store.Title, bool) {
 	}
 	return candidates[len(candidates)-1], true
 }
+
+// DoubleFeature picks two distinct candidates whose combined runtime fits
+// within budget minutes (budget <= 0 means no cap — just any random pair).
+// Titles without a known runtime are excluded, since there's nothing to sum.
+// ok is false when fewer than two runtime-known candidates exist, or no
+// pair fits the budget.
+func DoubleFeature(candidates []store.Title, budget int) (a, b store.Title, ok bool) {
+	timed := make([]store.Title, 0, len(candidates))
+	for _, t := range candidates {
+		if t.RuntimeMins > 0 {
+			timed = append(timed, t)
+		}
+	}
+	if len(timed) < 2 {
+		return store.Title{}, store.Title{}, false
+	}
+	rand.Shuffle(len(timed), func(i, j int) { timed[i], timed[j] = timed[j], timed[i] })
+	for i := 0; i < len(timed); i++ {
+		for j := i + 1; j < len(timed); j++ {
+			if budget <= 0 || timed[i].RuntimeMins+timed[j].RuntimeMins <= budget {
+				return timed[i], timed[j], true
+			}
+		}
+	}
+	return store.Title{}, store.Title{}, false
+}

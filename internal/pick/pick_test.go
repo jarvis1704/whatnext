@@ -64,3 +64,51 @@ func TestWeightedFavorsOlder(t *testing.T) {
 		t.Fatalf("Weighted favored the older title in %d/%d trials, want a strong majority", oldWins, trials)
 	}
 }
+
+func TestDoubleFeatureRespectsBudget(t *testing.T) {
+	titles := []store.Title{
+		{Name: "Short", RuntimeMins: 40},
+		{Name: "Medium", RuntimeMins: 90},
+		{Name: "Long", RuntimeMins: 150},
+	}
+
+	// Only Short+Medium (130) fits under 140; Short+Long and Medium+Long don't.
+	for i := 0; i < 50; i++ {
+		a, b, ok := DoubleFeature(titles, 140)
+		if !ok {
+			t.Fatal("DoubleFeature ok=false, want a fitting pair")
+		}
+		names := map[string]bool{a.Name: true, b.Name: true}
+		if !names["Short"] || !names["Medium"] || names["Long"] {
+			t.Fatalf("DoubleFeature(budget=140) = %s+%s, want Short+Medium", a.Name, b.Name)
+		}
+	}
+}
+
+func TestDoubleFeatureNoBudget(t *testing.T) {
+	titles := []store.Title{
+		{Name: "Short", RuntimeMins: 40},
+		{Name: "Long", RuntimeMins: 500},
+	}
+	a, b, ok := DoubleFeature(titles, 0)
+	if !ok || a.Name == b.Name {
+		t.Fatalf("DoubleFeature(budget=0) = %+v, %+v, ok=%v, want any distinct pair", a, b, ok)
+	}
+}
+
+func TestDoubleFeatureNeedsTwoTimedCandidates(t *testing.T) {
+	titles := []store.Title{{Name: "OnlyOne", RuntimeMins: 90}}
+	if _, _, ok := DoubleFeature(titles, 0); ok {
+		t.Fatal("DoubleFeature with one timed candidate should report ok=false")
+	}
+}
+
+func TestDoubleFeatureNoFit(t *testing.T) {
+	titles := []store.Title{
+		{Name: "A", RuntimeMins: 100},
+		{Name: "B", RuntimeMins: 100},
+	}
+	if _, _, ok := DoubleFeature(titles, 50); ok {
+		t.Fatal("DoubleFeature should report ok=false when no pair fits the budget")
+	}
+}

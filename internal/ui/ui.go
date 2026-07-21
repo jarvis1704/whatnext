@@ -25,6 +25,7 @@ const (
 	scrHome screen = iota
 	scrFilters
 	scrMinutes
+	scrDouble
 	scrReveal
 	scrBrowse
 	scrImport
@@ -47,6 +48,8 @@ func (m model) isTextEntry() bool {
 		return m.browse.filtering || m.browse.openMenu
 	case scrReveal:
 		return m.reveal.openMenu
+	case scrDouble:
+		return m.double.phase == dblEntry || m.double.openIdx >= 0
 	}
 	return false
 }
@@ -86,6 +89,11 @@ type model struct {
 	// minutes quick-pick
 	minutesInput textinput.Model
 	minutesErr   string
+
+	// double feature
+	doubleInput textinput.Model
+	doubleErr   string
+	double      doubleState
 
 	// reveal (slot machine)
 	reveal revealState
@@ -149,6 +157,12 @@ func New() (model, error) {
 	mi.CharLimit = 4
 	mi.Width = 8
 
+	di := textinput.New()
+	di.Placeholder = "blank = no limit"
+	di.Prompt = styleAccent.Render("› ")
+	di.CharLimit = 4
+	di.Width = 20
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cGold)
@@ -169,6 +183,7 @@ func New() (model, error) {
 		keyInput:     ki,
 		regionInput:  ri,
 		minutesInput: mi,
+		doubleInput:  di,
 		spinner:      sp,
 		bar:          bar,
 		filter:       newFilterState(moods),
@@ -249,6 +264,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateFilters(msg)
 	case scrMinutes:
 		return m.updateMinutes(msg)
+	case scrDouble:
+		return m.updateDouble(msg)
 	case scrReveal:
 		return m.updateReveal(msg)
 	case scrBrowse:
@@ -301,6 +318,8 @@ func (m model) View() string {
 		body = m.viewFilters()
 	case scrMinutes:
 		body = m.viewMinutes()
+	case scrDouble:
+		body = m.viewDouble()
 	case scrReveal:
 		body = m.viewReveal()
 	case scrBrowse:
