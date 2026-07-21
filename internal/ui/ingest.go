@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/jarvis1704/whatnext/internal/enrich"
 	"github.com/jarvis1704/whatnext/internal/letterboxd"
 	"github.com/jarvis1704/whatnext/internal/store"
-	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // ---- messages ----
@@ -22,25 +21,27 @@ type parsedTitlesMsg struct {
 	err    error
 }
 
-// runStepMsg triggers the next enrichment lookup after the polite delay.
-type runStepMsg struct{ step int }
+// enrichResultMsg carries one concurrent worker's result off m.enrichCh. ok
+// is false once the channel closes, meaning every job has reported.
+type enrichResultMsg struct {
+	res enrich.Result
+	ok  bool
+}
 
-// enrichStepMsg carries the result of one TMDb lookup, and — when a lookup
-// succeeded or the title was already enriched — its watch-provider refresh.
-type enrichStepMsg struct {
-	poolIdx   int
-	res       tmdb.Result
-	found     bool
-	providers []string
-	provErr   error
-	err       error
+// waitForEnrichResult reads the next result off ch, turning the channel
+// into a stream of tea.Msg — the standard bubbletea pattern for draining a
+// channel fed by background goroutines without blocking the Update loop.
+func waitForEnrichResult(ch <-chan enrich.Result) tea.Cmd {
+	return func() tea.Msg {
+		res, ok := <-ch
+		return enrichResultMsg{res: res, ok: ok}
+	}
 }
 
 // ---- progress state ----
 
 type progressState struct {
 	mode     string // "import" | "refresh"
-	queue    []int  // pool indices to enrich
 	cursor   int
 	total    int
 	found    int
@@ -144,18 +145,12 @@ func (m model) startRefresh() (tea.Model, tea.Cmd) {
 	return m.beginEnrich()
 }
 
-// beginEnrich builds the pending-work queue — unenriched titles, plus any
+// beginEnrich builds the pending-work list — unenriched titles, plus any
 // already-enriched title whose cached watch providers are stale for the
-// current region — and kicks off the first lookup.
+// current region — and kicks off a concurrent enrichment run.
 func (m model) beginEnrich() (tea.Model, tea.Cmd) {
-	m.prog.queue = nil
-	for i := range m.data.Titles {
-		t := &m.data.Titles[i]
-		if !t.Enriched || t.ProvidersRegion != m.region {
-			m.prog.queue = append(m.prog.queue, i)
-		}
-	}
-	m.prog.total = len(m.prog.queue)
+	jobs := enrich.Jobs(m.data, m.region)
+	m.prog.total = len(jobs)
 	m.prog.cursor = 0
 
 	if m.tmdb == nil {
@@ -167,59 +162,46 @@ func (m model) beginEnrich() (tea.Model, tea.Cmd) {
 		m.prog.done = true
 		return m, nil
 	}
-	return m, tea.Batch(m.enrichCmd(0), m.bar.SetPercent(0))
+	m.enrichCh = enrich.Run(jobs, m.tmdb, m.region)
+	return m, tea.Batch(waitForEnrichResult(m.enrichCh), m.bar.SetPercent(0))
 }
 
-func (m model) enrichCmd(step int) tea.Cmd {
-	poolIdx := m.prog.queue[step]
-	t := m.data.Titles[poolIdx]
-	client := m.tmdb
-	region := m.region
-	return func() tea.Msg {
-		if !t.Enriched {
-			res, ok, err := client.Lookup(t.Name, t.Year)
-			if err != nil || !ok {
-				return enrichStepMsg{poolIdx: poolIdx, res: res, found: ok, err: err}
-			}
-			provs, perr := client.WatchProviders(res.MediaType, res.TMDbID, region)
-			return enrichStepMsg{poolIdx: poolIdx, res: res, found: true, providers: provs, provErr: perr}
-		}
-		// Already enriched — this pass is purely a provider-region refresh.
-		provs, perr := client.WatchProviders(t.MediaType, t.TMDbID, region)
-		return enrichStepMsg{poolIdx: poolIdx, found: true, providers: provs, provErr: perr}
+// updateEnrichResult applies one concurrent worker's result to the pool and
+// re-arms the channel read for the next one, until the channel closes.
+func (m model) updateEnrichResult(msg enrichResultMsg) (tea.Model, tea.Cmd) {
+	if !msg.ok {
+		m.prog.done = true
+		return m, nil
 	}
-}
-
-func (m model) updateEnrichStep(msg enrichStepMsg) (tea.Model, tea.Cmd) {
-	t := &m.data.Titles[msg.poolIdx]
-	wasEnriched := t.Enriched
+	r := msg.res
+	t := &m.data.Titles[r.ID]
 	switch {
-	case msg.err != nil:
+	case r.Err != nil:
 		m.prog.errs++
-		m.pushLog(styleBad.Render("✗ ") + t.Name + styleSubtle.Render("  "+shortErr(msg.err)))
-	case !wasEnriched && msg.found:
-		t.TMDbID = msg.res.TMDbID
-		t.MediaType = msg.res.MediaType
-		t.Genres = msg.res.Genres
-		t.RuntimeMins = msg.res.RuntimeMins
-		t.VoteAverage = msg.res.VoteAverage
-		t.Popularity = msg.res.Popularity
+		m.pushLog(styleBad.Render("✗ ") + t.Name + styleSubtle.Render("  "+shortErr(r.Err)))
+	case r.Found && !r.ProvidersOnly:
+		t.TMDbID = r.Lookup.TMDbID
+		t.MediaType = r.Lookup.MediaType
+		t.Genres = r.Lookup.Genres
+		t.RuntimeMins = r.Lookup.RuntimeMins
+		t.VoteAverage = r.Lookup.VoteAverage
+		t.Popularity = r.Lookup.Popularity
 		t.Enriched = true
-		if msg.provErr == nil {
-			t.Providers = msg.providers
+		if r.ProvidersErr == nil {
+			t.Providers = r.Providers
 			t.ProvidersRegion = m.region
 		}
 		m.prog.found++
 		m.pushLog(styleGood.Render("✓ ") + t.Name + styleSubtle.Render("  "+strings.Join(t.Genres, ", ")))
-	case wasEnriched && msg.found:
-		if msg.provErr == nil {
-			t.Providers = msg.providers
+	case r.Found: // already enriched — this was purely a provider-region refresh
+		if r.ProvidersErr == nil {
+			t.Providers = r.Providers
 			t.ProvidersRegion = m.region
 		}
 		m.prog.found++
 		where := "no streaming providers found"
-		if len(msg.providers) > 0 {
-			where = strings.Join(msg.providers, ", ")
+		if len(r.Providers) > 0 {
+			where = strings.Join(r.Providers, ", ")
 		}
 		m.pushLog(styleGood.Render("▸ ") + t.Name + styleSubtle.Render("  "+where))
 	default:
@@ -227,30 +209,14 @@ func (m model) updateEnrichStep(msg enrichStepMsg) (tea.Model, tea.Cmd) {
 		m.pushLog(styleWarn.Render("? ") + t.Name + styleSubtle.Render("  no match"))
 	}
 
-	m.prog.cursor++
+	m.prog.cursor = r.Done
 	frac := float64(m.prog.cursor) / float64(max(m.prog.total, 1))
 	barCmd := m.bar.SetPercent(frac)
 
 	// Persist incrementally so a mid-run quit keeps what we've enriched.
 	_ = m.data.Save()
 
-	if m.prog.cursor >= m.prog.total {
-		m.prog.done = true
-		return m, barCmd
-	}
-	// Schedule the next lookup after the polite delay (plan §8).
-	step := m.prog.cursor
-	delay := tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg {
-		return runStepMsg{step: step}
-	})
-	return m, tea.Batch(barCmd, delay)
-}
-
-func (m model) updateRunStep(msg runStepMsg) (tea.Model, tea.Cmd) {
-	if m.prog.done || msg.step >= len(m.prog.queue) {
-		return m, nil
-	}
-	return m, m.enrichCmd(msg.step)
+	return m, tea.Batch(barCmd, waitForEnrichResult(m.enrichCh))
 }
 
 func (m model) updateProgress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -331,11 +297,8 @@ func (m model) viewProgress() string {
 	if m.prog.done {
 		head = styleGood.Render("✓ done")
 	} else {
-		cur := ""
-		if m.prog.cursor < len(m.prog.queue) {
-			cur = m.data.Titles[m.prog.queue[m.prog.cursor]].Name
-		}
-		head = m.spinner.View() + " " + lipgloss.NewStyle().Foreground(cFg).Render(cur)
+		label := fmt.Sprintf("enriching up to %d titles concurrently…", min(enrich.MaxWorkers, m.prog.total))
+		head = m.spinner.View() + " " + lipgloss.NewStyle().Foreground(cFg).Render(label)
 	}
 
 	countLine := fmt.Sprintf("%s/%s   %s  %s  %s",

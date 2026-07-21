@@ -1,87 +1,162 @@
 // Package enrich orchestrates TMDb enrichment over a pool of titles. It is the
 // shared engine behind both the `import`/`refresh` CLI commands and the TUI's
 // live progress views.
+//
+// Run enriches concurrently: many titles' TMDb lookups are in flight at
+// once, throttled by a shared rate limiter rather than a single sequential
+// sleep, and identity lookups (genre/runtime/rating) are cached to disk so
+// repeat runs over the same titles skip the network entirely.
 package enrich
 
 import (
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jarvis1704/whatnext/internal/store"
 	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
-// politeDelay throttles requests to be a good API citizen (plan §8).
+// politeDelay is the minimum gap between successive TMDb request sequences
+// across ALL workers combined — the same politeness budget a plain
+// sequential loop would enforce with time.Sleep, just shared via a limiter
+// so multiple titles' multi-request sequences can overlap in flight instead
+// of waiting on each other's full round trip.
 const politeDelay = 250 * time.Millisecond
 
-// Progress reports the outcome of enriching one title.
-type Progress struct {
-	Title store.Title
-	Found bool
-	Err   error
-	Done  int // 1-based index of this title
-	Total int
+// MaxWorkers caps how many titles are enriched concurrently.
+const MaxWorkers = 8
+
+// Job is one unit of enrichment work, keyed by an opaque ID the caller
+// assigns (typically a pool index) so results can be routed back safely.
+// Workers never touch *store.Title directly — only Result values cross the
+// channel — so this is safe to drive from a UI goroutine that's
+// concurrently rendering the same pool.
+type Job struct {
+	ID   int
+	Name string
+	Year string
+
+	// ProvidersOnly marks a title that's already enriched and only needs a
+	// watch-provider refresh for a new region.
+	ProvidersOnly bool
+	MediaType     string // valid when ProvidersOnly
+	TMDbID        int    // valid when ProvidersOnly
 }
 
-// Run enriches every unenriched title in d, and refreshes watch-provider data
-// for any title whose cached providers came from a different region, mutating
-// the pool in place. For each title it invokes onProgress (may be nil) so
-// callers can animate. The caller is responsible for saving d afterward. A
-// per-title error is reported through Progress.Err but does not abort the run.
-func Run(d *store.Data, c *tmdb.Client, region string, onProgress func(Progress)) {
-	targets := pending(d, region)
-	total := len(targets)
-	for i, t := range targets {
-		if i > 0 {
-			time.Sleep(politeDelay)
-		}
-		p := Progress{Done: i + 1, Total: total}
+// Result is the outcome of one Job.
+type Result struct {
+	ID          int
+	Done, Total int // 1-based completion count / total, for progress bars
 
-		if !t.Enriched {
-			res, ok, err := c.Lookup(t.Name, t.Year)
-			switch {
-			case err != nil:
-				p.Err = err
-			case ok:
-				t.TMDbID = res.TMDbID
-				t.MediaType = res.MediaType
-				t.Genres = res.Genres
-				t.RuntimeMins = res.RuntimeMins
-				t.VoteAverage = res.VoteAverage
-				t.Popularity = res.Popularity
-				t.Enriched = true
-				p.Found = true
-				fetchProviders(c, t, region)
+	Err           error       // a lookup transport error; title stays unenriched
+	Found         bool        // false: TMDb had no match for a fresh lookup
+	ProvidersOnly bool        // mirrors Job.ProvidersOnly
+	Lookup        tmdb.Result // populated when a fresh lookup succeeded
+
+	Providers    []string // nil when ProvidersErr != nil or nothing found
+	ProvidersErr error    // non-nil: leave the title's cached providers untouched
+}
+
+// Jobs builds the work list from a pool: every unenriched title, plus any
+// already-enriched title whose cached watch-providers are stale for region.
+func Jobs(d *store.Data, region string) []Job {
+	var jobs []Job
+	for i := range d.Titles {
+		t := &d.Titles[i]
+		switch {
+		case !t.Enriched:
+			jobs = append(jobs, Job{ID: i, Name: t.Name, Year: t.Year})
+		case t.ProvidersRegion != region:
+			jobs = append(jobs, Job{ID: i, ProvidersOnly: true, MediaType: t.MediaType, TMDbID: t.TMDbID})
+		}
+	}
+	return jobs
+}
+
+// Run enriches jobs concurrently against TMDb and streams a Result per job
+// on the returned channel, in completion order (not job order). The channel
+// closes once every job has reported. Run never mutates the pool — callers
+// apply each Result themselves.
+func Run(jobs []Job, c *tmdb.Client, region string) <-chan Result {
+	out := make(chan Result)
+	total := len(jobs)
+	if total == 0 {
+		close(out)
+		return out
+	}
+
+	cache := loadCache()
+	tokens, stop := newLimiter(politeDelay)
+
+	jobCh := make(chan Job)
+	go func() {
+		for _, j := range jobs {
+			jobCh <- j
+		}
+		close(jobCh)
+	}()
+
+	workers := MaxWorkers
+	if workers > total {
+		workers = total
+	}
+	var wg sync.WaitGroup
+	var completed atomic.Int32
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for j := range jobCh {
+				r := runJob(j, c, region, cache, tokens)
+				r.Total = total
+				r.Done = int(completed.Add(1))
+				out <- r
 			}
-		} else {
-			// Already enriched — just needs provider data for this region.
-			fetchProviders(c, t, region)
-			p.Found = true
-		}
-		p.Title = *t
-		if onProgress != nil {
-			onProgress(p)
-		}
+		}()
 	}
+
+	go func() {
+		wg.Wait()
+		stop()
+		if cache.dirty {
+			_ = cache.save()
+		}
+		close(out)
+	}()
+
+	return out
 }
 
-// fetchProviders looks up watch providers for an already-identified title and
-// caches the result. Errors are swallowed: providers are a nice-to-have, and
-// a failed lookup here shouldn't be reported as a failed enrichment.
-func fetchProviders(c *tmdb.Client, t *store.Title, region string) {
-	provs, err := c.WatchProviders(t.MediaType, t.TMDbID, region)
-	if err != nil {
-		return
+// runJob performs one job's TMDb work, consulting the identity cache before
+// spending a rate-limit token on a fresh lookup.
+func runJob(j Job, c *tmdb.Client, region string, cache *Cache, tokens <-chan struct{}) Result {
+	if j.ProvidersOnly {
+		<-tokens
+		provs, err := c.WatchProviders(j.MediaType, j.TMDbID, region)
+		return Result{ID: j.ID, ProvidersOnly: true, Found: true, Providers: provs, ProvidersErr: err}
 	}
-	t.Providers = provs
-	t.ProvidersRegion = region
-}
 
-// pending returns every title still needing work: unenriched titles first,
-// then enriched titles whose provider cache is stale for region.
-func pending(d *store.Data, region string) []*store.Title {
-	targets := d.Unenriched()
-	targets = append(targets, d.NeedsProviders(region)...)
-	return targets
+	var res tmdb.Result
+	var found bool
+	if e, hit := cache.get(j.Name, j.Year); hit {
+		res, found = e.Result, e.Found
+	} else {
+		<-tokens
+		var err error
+		res, found, err = c.Lookup(j.Name, j.Year)
+		if err != nil {
+			return Result{ID: j.ID, Err: err}
+		}
+		cache.put(j.Name, j.Year, cacheEntry{Result: res, Found: found})
+	}
+	if !found {
+		return Result{ID: j.ID, Found: false}
+	}
+
+	<-tokens
+	provs, provErr := c.WatchProviders(res.MediaType, res.TMDbID, region)
+	return Result{ID: j.ID, Found: true, Lookup: res, Providers: provs, ProvidersErr: provErr}
 }
 
 // CountUnenriched is a convenience for the UI's summary lines.
@@ -92,5 +167,5 @@ func CountUnenriched(d *store.Data) int {
 // CountPending is like CountUnenriched but also counts titles whose provider
 // cache needs refreshing for region.
 func CountPending(d *store.Data, region string) int {
-	return len(pending(d, region))
+	return len(d.Unenriched()) + len(d.NeedsProviders(region))
 }

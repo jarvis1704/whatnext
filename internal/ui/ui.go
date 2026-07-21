@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/jarvis1704/whatnext/internal/enrich"
 	"github.com/jarvis1704/whatnext/internal/mood"
 	"github.com/jarvis1704/whatnext/internal/store"
 	"github.com/jarvis1704/whatnext/internal/tmdb"
@@ -98,7 +99,8 @@ type model struct {
 	importErr   string
 
 	// progress (import/refresh enrichment)
-	prog progressState
+	prog     progressState
+	enrichCh <-chan enrich.Result
 
 	spinner spinner.Model
 	bar     progress.Model
@@ -230,10 +232,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateRevealTick()
 	case parsedTitlesMsg:
 		return m.afterParse(msg)
-	case enrichStepMsg:
-		return m.updateEnrichStep(msg)
-	case runStepMsg:
-		return m.updateRunStep(msg)
+	case enrichResultMsg:
+		return m.updateEnrichResult(msg)
 	}
 	return m, nil
 }

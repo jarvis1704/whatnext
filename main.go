@@ -177,32 +177,47 @@ func runEnrichment(data *store.Data, verb string) {
 		return
 	}
 	region := store.ResolveRegion()
-	total := enrich.CountPending(data, region)
+	jobs := enrich.Jobs(data, region)
+	total := len(jobs)
 	if total == 0 {
 		return
 	}
-	fmt.Printf("%s %d titles via TMDb…\n", capitalize(verb), total)
+	fmt.Printf("%s %d titles via TMDb (up to 8 at a time)…\n", capitalize(verb), total)
 
 	var found, missed, errs int
-	enrich.Run(data, client, region, func(p enrich.Progress) {
+	for r := range enrich.Run(jobs, client, region) {
+		t := &data.Titles[r.ID]
 		switch {
-		case p.Err != nil:
+		case r.Err != nil:
 			errs++
-		case p.Found:
+		case r.Found:
 			found++
+			if !r.ProvidersOnly {
+				t.TMDbID = r.Lookup.TMDbID
+				t.MediaType = r.Lookup.MediaType
+				t.Genres = r.Lookup.Genres
+				t.RuntimeMins = r.Lookup.RuntimeMins
+				t.VoteAverage = r.Lookup.VoteAverage
+				t.Popularity = r.Lookup.Popularity
+				t.Enriched = true
+			}
+			if r.ProvidersErr == nil {
+				t.Providers = r.Providers
+				t.ProvidersRegion = region
+			}
 		default:
 			missed++
 		}
 		// carriage-return progress line
 		fmt.Printf("\r\033[K%s %d/%d  %s %s %s  %s",
-			spinnerFrame(p.Done),
-			p.Done, p.Total,
+			spinnerFrame(r.Done),
+			r.Done, r.Total,
 			c(aGreen, fmt.Sprintf("✓%d", found)),
 			c(aAmber, fmt.Sprintf("?%d", missed)),
 			c(aRed, fmt.Sprintf("✗%d", errs)),
-			c(aDim, truncateStr(p.Title.Name, 30)),
+			c(aDim, truncateStr(t.Name, 30)),
 		)
-	})
+	}
 	fmt.Print("\r\033[K")
 	if err := data.Save(); err != nil {
 		fail(err)
