@@ -22,6 +22,7 @@ const (
 
 type revealState struct {
 	candidates []store.Title
+	usedFilter pick.Filter // remembered so reshuffle re-applies the same constraints
 	phase      revealPhase
 	spins      int         // remaining shuffle steps
 	displayIdx int         // which candidate name is flashing now
@@ -33,9 +34,18 @@ type revealTickMsg struct{}
 
 const totalSpins = 16
 
+// startReveal launches the reveal flow using the tuned filters screen's
+// current selections.
 func (m model) startReveal() (tea.Model, tea.Cmd) {
-	cands := pick.Candidates(m.data.Titles, m.buildFilter())
-	m.reveal = revealState{candidates: cands}
+	return m.startRevealWithFilter(m.buildFilter())
+}
+
+// startRevealWithFilter launches the reveal flow against an explicit filter,
+// letting other entry points (like the minutes quick-pick) skip the tuned
+// filters screen entirely while still landing on the same reveal UI.
+func (m model) startRevealWithFilter(f pick.Filter) (tea.Model, tea.Cmd) {
+	cands := pick.Candidates(m.data.Titles, f)
+	m.reveal = revealState{candidates: cands, usedFilter: f}
 	m.goTo(scrReveal)
 
 	if len(cands) == 0 {
@@ -76,15 +86,15 @@ func (m model) updateRevealTick() (tea.Model, tea.Cmd) {
 func (m model) updateReveal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "backspace", "h", "left":
-		m.goTo(scrFilters)
+		m.goTo(m.prev)
 		return m, nil
 	}
 	if m.reveal.phase != revLanded {
 		return m, nil
 	}
 	switch msg.String() {
-	case "enter", "r": // reshuffle
-		return m.startReveal()
+	case "enter", "r": // reshuffle, re-applying whatever filter got us here
+		return m.startRevealWithFilter(m.reveal.usedFilter)
 	case "w": // mark this pick watched
 		return m.markWatchedURI(m.reveal.result.LetterboxdURI)
 	case "u": // undo the last watched change
@@ -135,7 +145,7 @@ func (m model) viewReveal() string {
 	case revEmpty:
 		msg := styleWarn.Render("No unwatched titles match those filters.")
 		hint := styleSubtle.Render("Loosen a filter, or import more titles.")
-		foot := m.footer([2]string{"esc", "back to filters"})
+		foot := m.footer([2]string{"esc", "back"})
 		box := stylePanel.BorderForeground(cAmber).Render(
 			lipgloss.JoinVertical(lipgloss.Center, "🍿", "", msg, hint))
 		return lipgloss.JoinVertical(lipgloss.Left, box, "", foot)
@@ -236,7 +246,7 @@ func (m model) viewLanded() string {
 		[2]string{"↵/r", "reshuffle"},
 		[2]string{"w", "mark watched"},
 		[2]string{"u", "undo"},
-		[2]string{"esc", "filters"},
+		[2]string{"esc", "back"},
 	)
 	blocks := []string{card, ""}
 	if status != "" {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jarvis1704/whatnext/internal/enrich"
@@ -54,6 +55,8 @@ func main() {
 		cmdImport(args[1:])
 	case "pick":
 		cmdPick(args[1:])
+	case "minutes":
+		cmdMinutes(args[1:])
 	case "list":
 		cmdList(args[1:])
 	case "watched":
@@ -86,6 +89,7 @@ func usage() {
   whatnext                          launch the interactive TUI
   whatnext import <path>            import a Letterboxd .zip or watchlist.csv
   whatnext pick [flags]             random pick from your unwatched pool
+  whatnext minutes <n>              instant pick that fits in n minutes
   whatnext list [--watched] [--on <provider>]   print the pool as a table
   whatnext watched "<title>"        mark a title watched (fuzzy match)
   whatnext undo                     unmark the last watched change
@@ -101,6 +105,7 @@ func usage() {
   --type <movie|tv>     filter by media type
   --max-runtime <min>   cap runtime in minutes
   --on <provider>       filter to a streaming provider, e.g. Netflix
+  --weighted            favor titles that have sat unwatched the longest
 
 %s
   TMDB_API_KEY          free TMDb v3 key, required for enrichment
@@ -344,6 +349,7 @@ func cmdPick(args []string) {
 	mediaType := fs.String("type", "", "media type: movie|tv")
 	maxRuntime := fs.Int("max-runtime", 0, "max runtime in minutes")
 	provider := fs.String("on", "", "streaming provider filter, e.g. Netflix")
+	weighted := fs.Bool("weighted", false, "favor titles that have sat unwatched the longest")
 	fs.Parse(args)
 
 	data, err := store.Load()
@@ -365,13 +371,22 @@ func cmdPick(args []string) {
 	}
 
 	cands := pick.Candidates(data.Titles, f)
-	t, ok := pick.Random(cands)
+	choose := pick.Random
+	if *weighted {
+		choose = pick.Weighted
+	}
+	t, ok := choose(cands)
 	if !ok {
 		fmt.Println(c(aAmber, "No unwatched titles match those filters."))
 		fmt.Println(c(aDim, "Try loosening a filter, or import more titles."))
 		os.Exit(1)
 	}
+	printPick(t)
+}
 
+// printPick renders a picked title the same way for every entry point
+// (pick, minutes).
+func printPick(t store.Title) {
 	meta := []string{}
 	if len(t.Genres) > 0 {
 		meta = append(meta, strings.Join(t.Genres, ", "))
@@ -390,6 +405,35 @@ func cmdPick(args []string) {
 		line += c(aViolet, " — "+strings.Join(meta, " — "))
 	}
 	fmt.Println(line)
+}
+
+// ---- minutes ----
+
+// cmdMinutes is the "I have X minutes" quick-pick: a one-shot runtime-budget
+// filter, so you don't have to remember the --max-runtime flag name.
+func cmdMinutes(args []string) {
+	fs := flag.NewFlagSet("minutes", flag.ExitOnError)
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		fail(fmt.Errorf("usage: whatnext minutes <n>"))
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(fs.Arg(0)))
+	if err != nil || n <= 0 {
+		fail(fmt.Errorf("minutes must be a positive whole number, got %q", fs.Arg(0)))
+	}
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	cands := pick.Candidates(data.Titles, pick.Filter{MaxRuntime: n})
+	t, ok := pick.Random(cands)
+	if !ok {
+		fmt.Println(c(aAmber, fmt.Sprintf("Nothing unwatched fits in %d minutes.", n)))
+		fmt.Println(c(aDim, "Try a bigger budget, or import more titles."))
+		os.Exit(1)
+	}
+	printPick(t)
 }
 
 // ---- list ----

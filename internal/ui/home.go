@@ -18,6 +18,7 @@ type homeItem struct {
 func (m model) homeItems() []homeItem {
 	return []homeItem{
 		{"🎲", "Pick something", "Random pick, optionally by mood or filters", scrFilters},
+		{"⏱", "I have X minutes", "Runtime budget → instant pick", scrMinutes},
 		{"🗂", "Browse pool", "Scroll your watchlist, mark titles watched", scrBrowse},
 		{"📥", "Import export", "Load a Letterboxd .zip or watchlist.csv", scrImport},
 		{"✨", "Refresh enrichment", "Retry TMDb lookups for unenriched titles", scrProgress},
@@ -44,6 +45,12 @@ func (m model) chooseHome(it homeItem) (tea.Model, tea.Cmd) {
 	case scrFilters:
 		m.filterIdx = 0
 		m.goTo(scrFilters)
+	case scrMinutes:
+		m.minutesInput.Reset()
+		m.minutesInput.Focus()
+		m.minutesErr = ""
+		m.goTo(scrMinutes)
+		return m, textinput.Blink
 	case scrBrowse:
 		m.browse = newBrowseState(m.data, false)
 		m.goTo(scrBrowse)

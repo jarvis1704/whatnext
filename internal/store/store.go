@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Title is one entry in the watchlist pool.
@@ -21,6 +22,11 @@ type Title struct {
 	RuntimeMins   int      `json:"runtime_mins"`
 	Enriched      bool     `json:"enriched"`
 	Watched       bool     `json:"watched"`
+
+	// AddedAt is when this title entered the whatnext pool, set the moment
+	// Upsert first accepts it. Used by --weighted picks to favor titles
+	// that have sat unwatched the longest.
+	AddedAt time.Time `json:"added_at"`
 
 	// Providers lists the streaming services offering this title on a
 	// subscription (flatrate), for ProvidersRegion. Empty means "checked,
@@ -116,6 +122,9 @@ func (d *Data) Upsert(t Title) bool {
 		if d.Titles[i].LetterboxdURI != "" && d.Titles[i].LetterboxdURI == t.LetterboxdURI {
 			return false
 		}
+	}
+	if t.AddedAt.IsZero() {
+		t.AddedAt = time.Now()
 	}
 	d.Titles = append(d.Titles, t)
 	return true

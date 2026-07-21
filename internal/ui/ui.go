@@ -23,6 +23,7 @@ type screen int
 const (
 	scrHome screen = iota
 	scrFilters
+	scrMinutes
 	scrReveal
 	scrBrowse
 	scrImport
@@ -39,7 +40,7 @@ const (
 // instead.
 func (m model) isTextEntry() bool {
 	switch m.screen {
-	case scrImport, scrRegion, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
+	case scrImport, scrMinutes, scrRegion, scrOnboardKey, scrOnboardRegion, scrOnboardPath:
 		return true
 	case scrBrowse:
 		return m.browse.filtering
@@ -78,6 +79,10 @@ type model struct {
 	// filters
 	filter    filterState
 	filterIdx int
+
+	// minutes quick-pick
+	minutesInput textinput.Model
+	minutesErr   string
 
 	// reveal (slot machine)
 	reveal revealState
@@ -134,6 +139,12 @@ func New() (model, error) {
 	ri.CharLimit = 2
 	ri.Width = 8
 
+	mi := textinput.New()
+	mi.Placeholder = "45"
+	mi.Prompt = styleAccent.Render("› ")
+	mi.CharLimit = 4
+	mi.Width = 8
+
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(cGold)
@@ -144,18 +155,19 @@ func New() (model, error) {
 	)
 
 	m := model{
-		screen:      scrHome,
-		data:        data,
-		moods:       moods,
-		tmdb:        client,
-		tmdbErr:     keyErr,
-		region:      store.ResolveRegion(),
-		pathInput:   ti,
-		keyInput:    ki,
-		regionInput: ri,
-		spinner:     sp,
-		bar:         bar,
-		filter:      newFilterState(moods),
+		screen:       scrHome,
+		data:         data,
+		moods:        moods,
+		tmdb:         client,
+		tmdbErr:      keyErr,
+		region:       store.ResolveRegion(),
+		pathInput:    ti,
+		keyInput:     ki,
+		regionInput:  ri,
+		minutesInput: mi,
+		spinner:      sp,
+		bar:          bar,
+		filter:       newFilterState(moods),
 	}
 
 	// First run (no config.json yet) → walk the onboarding flow. If a key is
@@ -233,6 +245,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateHome(msg)
 	case scrFilters:
 		return m.updateFilters(msg)
+	case scrMinutes:
+		return m.updateMinutes(msg)
 	case scrReveal:
 		return m.updateReveal(msg)
 	case scrBrowse:
@@ -283,6 +297,8 @@ func (m model) View() string {
 		body = m.viewHome()
 	case scrFilters:
 		body = m.viewFilters()
+	case scrMinutes:
+		body = m.viewMinutes()
 	case scrReveal:
 		body = m.viewReveal()
 	case scrBrowse:

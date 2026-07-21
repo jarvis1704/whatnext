@@ -5,6 +5,7 @@ package pick
 import (
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/jarvis1704/whatnext/internal/store"
 )
@@ -93,4 +94,36 @@ func Random(candidates []store.Title) (store.Title, bool) {
 		return store.Title{}, false
 	}
 	return candidates[rand.Intn(len(candidates))], true
+}
+
+// Weighted returns a random title from candidates, weighted by days since
+// AddedAt so titles that have sat unwatched the longest are proportionally
+// more likely to be picked. Titles without a recorded AddedAt (pool entries
+// from before this field existed) weigh as maximally old. ok is false when
+// the slice is empty.
+func Weighted(candidates []store.Title) (store.Title, bool) {
+	if len(candidates) == 0 {
+		return store.Title{}, false
+	}
+	now := time.Now()
+	weights := make([]float64, len(candidates))
+	total := 0.0
+	for i, t := range candidates {
+		age := 1.0 // +1 so a same-day add still has a nonzero chance
+		if !t.AddedAt.IsZero() {
+			age += now.Sub(t.AddedAt).Hours() / 24
+		} else {
+			age += 365 * 10 // untracked entries: treat as a decade old
+		}
+		weights[i] = age
+		total += age
+	}
+	r := rand.Float64() * total
+	for i, w := range weights {
+		r -= w
+		if r <= 0 {
+			return candidates[i], true
+		}
+	}
+	return candidates[len(candidates)-1], true
 }
