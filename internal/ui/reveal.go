@@ -242,6 +242,31 @@ func (m model) viewLanded() string {
 		meta = styleSubtle.Render("not yet enriched — no genre/runtime data")
 	}
 
+	var crew string
+	if t.Enriched && (t.Director != "" || len(t.Cast) > 0) {
+		var bits []string
+		if t.Director != "" {
+			bits = append(bits, "Dir. "+t.Director)
+		}
+		if len(t.Cast) > 0 {
+			bits = append(bits, "Starring "+strings.Join(t.Cast, ", "))
+		}
+		crew = lipgloss.NewStyle().Foreground(dimColor(hex("#E5E7EB"), 0.15+(1-fade)*0.5)).
+			Render(strings.Join(bits, "   "))
+	}
+
+	var origin string
+	if t.Enriched && (t.Language != "" || t.Country != "") {
+		var bits []string
+		if t.Language != "" {
+			bits = append(bits, t.Language)
+		}
+		if t.Country != "" {
+			bits = append(bits, t.Country)
+		}
+		origin = styleSubtle.Render(strings.Join(bits, "  ·  "))
+	}
+
 	var streaming string
 	if len(t.Providers) > 0 {
 		streaming = lipgloss.NewStyle().Foreground(dimColor(hex(string(cCyan)), 1-fade)).
@@ -251,6 +276,12 @@ func (m model) viewLanded() string {
 	marquee := gradientText("🎬  Tonight's pick", float64(m.frame)/24.0, true)
 
 	cardBlocks := []string{marquee, "", titleLine, meta}
+	if crew != "" {
+		cardBlocks = append(cardBlocks, crew)
+	}
+	if origin != "" {
+		cardBlocks = append(cardBlocks, origin)
+	}
 	if streaming != "" {
 		cardBlocks = append(cardBlocks, streaming)
 	}

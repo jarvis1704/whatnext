@@ -237,6 +237,9 @@ func (m model) doubleCard(t store.Title, label string) string {
 		if t.VoteAverage > 0 {
 			bits = append(bits, fmt.Sprintf("★ %.1f", t.VoteAverage))
 		}
+		if t.Director != "" {
+			bits = append(bits, "Dir. "+t.Director)
+		}
 		meta = styleSubtle.Render(strings.Join(bits, "  ·  "))
 	}
 	inner := lipgloss.JoinVertical(lipgloss.Center, styleSubtle.Render(label), titleLine, meta)

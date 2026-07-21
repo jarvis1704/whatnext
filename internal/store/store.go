@@ -25,6 +25,14 @@ type Title struct {
 	VoteAverage   float64  `json:"vote_average,omitempty"` // TMDb rating, 0-10
 	Popularity    float64  `json:"popularity,omitempty"`   // TMDb popularity score
 
+	// Director is the movie's director, or a tv show's "created by" credit
+	// (joined) since tv has no single director. Cast is the top-billed cast,
+	// in credited order. Language/Country are friendly display names.
+	Director string   `json:"director,omitempty"`
+	Cast     []string `json:"cast,omitempty"`
+	Language string   `json:"language,omitempty"`
+	Country  string   `json:"country,omitempty"`
+
 	// AddedAt is when this title entered the whatnext pool, set the moment
 	// Upsert first accepts it. Used by --weighted picks to favor titles
 	// that have sat unwatched the longest.

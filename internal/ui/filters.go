@@ -3,7 +3,9 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -18,13 +20,32 @@ type filterState struct {
 	mediaIdx    int // 0 any, 1 movie, 2 tv
 	runtimeIx   int // index into runtimeCaps
 	providerIdx int // -1 = any provider; else index into m.availableProviders()
+
+	directorInput textinput.Model
+	actorInput    textinput.Model
+	editing       bool // true while directorInput/actorInput (whichever filterIdx points at) has focus
 }
 
 var runtimeCaps = []int{0, 90, 120, 150, 999}
 var mediaOpts = []string{"any", "movie", "tv"}
 
 func newFilterState(cfg *mood.Config) filterState {
-	return filterState{moodNames: cfg.Names(), moodIdx: -1, providerIdx: -1}
+	di := textinput.New()
+	di.Placeholder = "any director"
+	di.Prompt = styleAccent.Render("› ")
+	di.CharLimit = 64
+	di.Width = 24
+
+	ai := textinput.New()
+	ai.Placeholder = "any actor"
+	ai.Prompt = styleAccent.Render("› ")
+	ai.CharLimit = 64
+	ai.Width = 24
+
+	return filterState{
+		moodNames: cfg.Names(), moodIdx: -1, providerIdx: -1,
+		directorInput: di, actorInput: ai,
+	}
 }
 
 // filter rows the user can cycle through.
@@ -33,11 +54,16 @@ const (
 	rowMedia
 	rowRuntime
 	rowProvider
+	rowDirector
+	rowActor
 	rowPick
 	rowCount
 )
 
 func (m model) updateFilters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.filter.editing {
+		return m.updateFilterEditing(msg)
+	}
 	switch msg.String() {
 	case "esc", "backspace", "h", "left":
 		m.goTo(scrHome)
@@ -56,14 +82,45 @@ func (m model) updateFilters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter.runtimeIx = (m.filter.runtimeIx + 1) % len(runtimeCaps)
 		case rowProvider:
 			m.filter.cycleProvider(1, len(m.availableProviders()))
+		case rowDirector:
+			m.filter.editing = true
+			m.filter.directorInput.Focus()
+			return m, textinput.Blink
+		case rowActor:
+			m.filter.editing = true
+			m.filter.actorInput.Focus()
+			return m, textinput.Blink
 		case rowPick:
 			return m.startReveal()
 		}
 	case "r":
 		// quick reset
 		m.filter.moodIdx, m.filter.mediaIdx, m.filter.runtimeIx, m.filter.providerIdx = -1, 0, 0, -1
+		m.filter.directorInput.SetValue("")
+		m.filter.actorInput.SetValue("")
 	}
 	return m, nil
+}
+
+// updateFilterEditing routes every key into whichever text field (director
+// or actor) filterIdx currently points at, until enter/esc hands focus back
+// to row navigation.
+func (m model) updateFilterEditing(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "enter":
+		m.filter.editing = false
+		m.filter.directorInput.Blur()
+		m.filter.actorInput.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	switch m.filterIdx {
+	case rowDirector:
+		m.filter.directorInput, cmd = m.filter.directorInput.Update(msg)
+	case rowActor:
+		m.filter.actorInput, cmd = m.filter.actorInput.Update(msg)
+	}
+	return m, cmd
 }
 
 func (f *filterState) cycleMood(dir int) {
@@ -129,6 +186,12 @@ func (m model) buildFilter() pick.Filter {
 	if providers := m.availableProviders(); m.filter.providerIdx >= 0 && m.filter.providerIdx < len(providers) {
 		f.Provider = providers[m.filter.providerIdx]
 	}
+	if v := strings.TrimSpace(m.filter.directorInput.Value()); v != "" {
+		f.Director = v
+	}
+	if v := strings.TrimSpace(m.filter.actorInput.Value()); v != "" {
+		f.Actor = v
+	}
 	return f
 }
 
@@ -158,6 +221,8 @@ func (m model) viewFilters() string {
 		m.filterRow(rowMedia, "Type", mediaOpts[m.filter.mediaIdx], ""),
 		m.filterRow(rowRuntime, "Runtime", runtimeVal, ""),
 		m.filterRow(rowProvider, "Watch on", providerVal, m.providerChips(providers)),
+		m.filterTextRow(rowDirector, "Director", m.filter.directorInput),
+		m.filterTextRow(rowActor, "Actor", m.filter.actorInput),
 		"",
 		m.pickButton(),
 	}
@@ -174,6 +239,9 @@ func (m model) viewFilters() string {
 		[2]string{"r", "reset"},
 		[2]string{"esc", "back"},
 	)
+	if m.filter.editing {
+		foot = m.footer([2]string{"↵/esc", "done editing"})
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, title, "", panel, "", count, "", foot)
 }
 
@@ -193,6 +261,30 @@ func (m model) filterRow(idx int, label, value, extra string) string {
 		line += "\n" + extra
 	}
 	return line
+}
+
+// filterTextRow renders a free-text filter row (director/actor): the live
+// input box while it's focused for editing, the entered value or a dim
+// placeholder otherwise.
+func (m model) filterTextRow(idx int, label string, ti textinput.Model) string {
+	selected := m.filterIdx == idx
+	marker := "  "
+	labelStyle := lipgloss.NewStyle().Foreground(cSubtle)
+	if selected {
+		markCol := lipgloss.Color(gradientAt(float64(m.frame) / 30.0).Clamped().Hex())
+		marker = lipgloss.NewStyle().Foreground(markCol).Bold(true).Render("▸ ")
+		labelStyle = labelStyle.Foreground(cFg).Bold(true)
+	}
+	var value string
+	switch {
+	case selected && m.filter.editing:
+		value = ti.View()
+	case ti.Value() != "":
+		value = lipgloss.NewStyle().Foreground(cGold).Bold(true).Render(ti.Value())
+	default:
+		value = styleSubtle.Render(ti.Placeholder)
+	}
+	return marker + labelStyle.Width(10).Render(label) + value
 }
 
 // moodChips renders the mood options as a chip row, highlighting the active one.

@@ -19,11 +19,14 @@ type Filter struct {
 	MaxRuntime int      // minutes; 0 = no cap
 	Provider   string   // streaming provider name (case-insensitive), e.g. "Netflix"
 	MinRating  float64  // minimum TMDb vote average (0-10); 0 = no floor
+	Director   string   // substring match against the director/creator (case-insensitive)
+	Actor      string   // substring match against any top-billed cast member (case-insensitive)
 }
 
 // Active reports whether any constraint is set.
 func (f Filter) Active() bool {
-	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 || f.Provider != "" || f.MinRating > 0
+	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 ||
+		f.Provider != "" || f.MinRating > 0 || f.Director != "" || f.Actor != ""
 }
 
 // Candidates returns every unwatched title matching f. When a genre or mood
@@ -70,12 +73,35 @@ func matches(t store.Title, f Filter) bool {
 	if f.MinRating > 0 && t.VoteAverage < f.MinRating {
 		return false
 	}
+	if f.Director != "" {
+		if !t.Enriched || !strings.Contains(strings.ToLower(t.Director), strings.ToLower(f.Director)) {
+			return false
+		}
+	}
+	if f.Actor != "" {
+		if !t.Enriched || !containsSubstring(t.Cast, f.Actor) {
+			return false
+		}
+	}
 	return true
 }
 
 func hasGenre(genres []string, want string) bool {
 	for _, g := range genres {
 		if strings.EqualFold(g, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsSubstring reports whether any entry in list contains want,
+// case-insensitively — used for cast matching, where users search by a
+// partial name ("Cruise" for "Tom Cruise") rather than an exact one.
+func containsSubstring(list []string, want string) bool {
+	w := strings.ToLower(want)
+	for _, s := range list {
+		if strings.Contains(strings.ToLower(s), w) {
 			return true
 		}
 	}

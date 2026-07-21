@@ -186,6 +186,10 @@ func (m model) updateEnrichResult(msg enrichResultMsg) (tea.Model, tea.Cmd) {
 		t.RuntimeMins = r.Lookup.RuntimeMins
 		t.VoteAverage = r.Lookup.VoteAverage
 		t.Popularity = r.Lookup.Popularity
+		t.Director = r.Lookup.Director
+		t.Cast = r.Lookup.Cast
+		t.Language = r.Lookup.Language
+		t.Country = r.Lookup.Country
 		t.Enriched = true
 		if r.ProvidersErr == nil {
 			t.Providers = r.Providers

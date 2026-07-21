@@ -109,6 +109,8 @@ func usage() {
   --max-runtime <min>   cap runtime in minutes
   --on <provider>       filter to a streaming provider, e.g. Netflix
   --min-rating <score>  minimum TMDb rating, 0-10
+  --director <name>     director/creator filter, substring match
+  --actor <name>        cast member filter, substring match
   --weighted            favor titles that have sat unwatched the longest
 
 %s
@@ -202,6 +204,10 @@ func runEnrichment(data *store.Data, verb string) {
 				t.RuntimeMins = r.Lookup.RuntimeMins
 				t.VoteAverage = r.Lookup.VoteAverage
 				t.Popularity = r.Lookup.Popularity
+				t.Director = r.Lookup.Director
+				t.Cast = r.Lookup.Cast
+				t.Language = r.Lookup.Language
+				t.Country = r.Lookup.Country
 				t.Enriched = true
 			}
 			if r.ProvidersErr == nil {
@@ -369,6 +375,8 @@ func cmdPick(args []string) {
 	maxRuntime := fs.Int("max-runtime", 0, "max runtime in minutes")
 	provider := fs.String("on", "", "streaming provider filter, e.g. Netflix")
 	minRating := fs.Float64("min-rating", 0, "minimum TMDb rating (0-10)")
+	director := fs.String("director", "", "director/creator filter (substring match)")
+	actor := fs.String("actor", "", "cast member filter (substring match)")
 	weighted := fs.Bool("weighted", false, "favor titles that have sat unwatched the longest")
 	fs.Parse(args)
 
@@ -376,7 +384,10 @@ func cmdPick(args []string) {
 	if err != nil {
 		fail(err)
 	}
-	f := pick.Filter{Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider, MinRating: *minRating}
+	f := pick.Filter{
+		Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider,
+		MinRating: *minRating, Director: *director, Actor: *actor,
+	}
 	if *moodName != "" {
 		cfg, err := mood.Load()
 		if err != nil {
@@ -416,6 +427,9 @@ func printPick(t store.Title) {
 	}
 	if t.VoteAverage > 0 {
 		meta = append(meta, fmt.Sprintf("★ %.1f", t.VoteAverage))
+	}
+	if t.Director != "" {
+		meta = append(meta, "dir. "+t.Director)
 	}
 	if len(t.Providers) > 0 {
 		meta = append(meta, "streaming on "+strings.Join(t.Providers, ", "))

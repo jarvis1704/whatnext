@@ -50,6 +50,8 @@ func (m model) isTextEntry() bool {
 		return m.reveal.openMenu
 	case scrDouble:
 		return m.double.phase == dblEntry || m.double.openIdx >= 0
+	case scrFilters:
+		return m.filter.editing
 	}
 	return false
 }

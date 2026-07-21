@@ -34,6 +34,32 @@ func TestCandidatesMinRating(t *testing.T) {
 	}
 }
 
+func TestCandidatesDirectorFilter(t *testing.T) {
+	titles := []store.Title{
+		{Name: "A", Enriched: true, Director: "Christopher Nolan"},
+		{Name: "B", Enriched: true, Director: "Greta Gerwig"},
+		{Name: "C", Enriched: true}, // no director
+	}
+
+	got := Candidates(titles, Filter{Director: "nolan"})
+	if len(got) != 1 || got[0].Name != "A" {
+		t.Fatalf("Candidates(Director=nolan) = %+v, want just A (case-insensitive substring)", got)
+	}
+}
+
+func TestCandidatesActorFilter(t *testing.T) {
+	titles := []store.Title{
+		{Name: "A", Enriched: true, Cast: []string{"Tom Cruise", "Simon Pegg"}},
+		{Name: "B", Enriched: true, Cast: []string{"Greta Gerwig"}},
+		{Name: "C", Enriched: true}, // no cast
+	}
+
+	got := Candidates(titles, Filter{Actor: "cruise"})
+	if len(got) != 1 || got[0].Name != "A" {
+		t.Fatalf("Candidates(Actor=cruise) = %+v, want just A (case-insensitive substring, any cast member)", got)
+	}
+}
+
 func TestWeightedEmpty(t *testing.T) {
 	if _, ok := Weighted(nil); ok {
 		t.Fatal("Weighted(nil) should report ok=false")
