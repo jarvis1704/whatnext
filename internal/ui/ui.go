@@ -139,7 +139,7 @@ func New() (model, error) {
 
 	var client *tmdb.Client
 	var keyErr error
-	client, keyErr = tmdb.New(store.ResolveKey())
+	client, keyErr = enrich.NewClient(store.ResolveKey())
 
 	ti := textinput.New()
 	ti.Placeholder = "~/Downloads/letterboxd-export.zip"

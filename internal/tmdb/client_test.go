@@ -157,6 +157,7 @@ func TestEpisodeRuntimeMedianOfSeasonOne(t *testing.T) {
 }
 
 func TestTransportErrorRedactsKey(t *testing.T) {
+	fastRetries(t)
 	c, _ := New("super-secret-key")
 	c.base = "http://127.0.0.1:1" // nothing listens here
 	_, err := c.Search("x", "")

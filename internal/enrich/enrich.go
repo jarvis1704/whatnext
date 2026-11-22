@@ -9,6 +9,7 @@
 package enrich
 
 import (
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -235,6 +236,20 @@ func FromTMDb(c *tmdb.Client, hit tmdb.SearchHit, region string) (store.Title, e
 		t.ProvidersRegion = region
 	}
 	return t, nil
+}
+
+// NewClient builds a TMDb client that persists per-edge reliability stats
+// to ~/.whatnext/tmdb_edges.json, so every run starts on CDN edges known to
+// work from this network. Use it instead of tmdb.New everywhere.
+func NewClient(key string) (*tmdb.Client, error) {
+	c, err := tmdb.New(key)
+	if err != nil {
+		return nil, err
+	}
+	if dir, derr := store.Dir(); derr == nil {
+		c.PersistEdges(filepath.Join(dir, "tmdb_edges.json"))
+	}
+	return c, nil
 }
 
 // CountUnenriched is a convenience for the UI's summary lines.

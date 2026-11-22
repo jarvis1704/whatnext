@@ -22,9 +22,10 @@ var ErrNoKey = fmt.Errorf("TMDB_API_KEY is not set")
 
 // Client talks to TMDb using a v3 API key.
 type Client struct {
-	key  string
-	base string // API root; DefaultBaseURL outside tests
-	http *http.Client
+	key   string
+	base  string // API root; DefaultBaseURL outside tests
+	http  *http.Client
+	edges *edgeStats // per-address reliability, shared by the dialer and fetch
 }
 
 // New returns a Client, or ErrNoKey if key is empty.
@@ -32,10 +33,12 @@ func New(key string) (*Client, error) {
 	if strings.TrimSpace(key) == "" {
 		return nil, ErrNoKey
 	}
+	edges := newEdgeStats()
 	return &Client{
-		key:  key,
-		base: DefaultBaseURL,
-		http: &http.Client{Timeout: 15 * time.Second},
+		key:   key,
+		base:  DefaultBaseURL,
+		http:  newHTTPClient(edges),
+		edges: edges,
 	}, nil
 }
 
@@ -47,19 +50,18 @@ var ErrBadKey = fmt.Errorf("TMDb rejected the API key (401)")
 func (c *Client) Health() (time.Duration, error) {
 	q := url.Values{"api_key": {c.key}}
 	start := time.Now()
-	resp, err := c.http.Get(c.base + "/configuration?" + q.Encode())
-	if err != nil {
-		return 0, redact("/configuration", err)
-	}
-	defer resp.Body.Close()
+	status, _, err := c.fetch("/configuration", c.base+"/configuration?"+q.Encode())
 	lat := time.Since(start)
-	switch resp.StatusCode {
+	if err != nil {
+		return 0, err
+	}
+	switch status {
 	case http.StatusOK:
 		return lat, nil
 	case http.StatusUnauthorized:
 		return lat, ErrBadKey
 	default:
-		return lat, fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return lat, fmt.Errorf("unexpected status %d", status)
 	}
 }
 
@@ -506,13 +508,12 @@ func (c *Client) get(path string, q url.Values, out any) error {
 	q.Set("api_key", c.key)
 	u := c.base + path + "?" + q.Encode()
 
-	resp, err := c.http.Get(u)
+	status, body, err := c.fetch(path, u)
 	if err != nil {
-		return redact(path, err)
+		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("tmdb %s: status %d", path, resp.StatusCode)
+	if status != http.StatusOK {
+		return fmt.Errorf("tmdb %s: status %d", path, status)
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return json.Unmarshal(body, out)
 }

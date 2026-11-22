@@ -191,7 +191,7 @@ func cmdAdd(args []string) {
 		kind = "movie"
 	}
 
-	client, err := tmdb.New(store.ResolveKey())
+	client, err := enrich.NewClient(store.ResolveKey())
 	if err != nil {
 		fail(fmt.Errorf("adding needs a TMDb API key — run whatnext once for onboarding, or export TMDB_API_KEY"))
 	}
@@ -304,7 +304,7 @@ func cmdRefresh(args []string) {
 
 // runEnrichment enriches the pool with a live single-line progress readout.
 func runEnrichment(data *store.Data, verb string) {
-	client, err := tmdb.New(store.ResolveKey())
+	client, err := enrich.NewClient(store.ResolveKey())
 	if err != nil {
 		fmt.Println(c(aAmber, "⚠ No TMDb API key — skipping enrichment."))
 		fmt.Println(c(aDim, "  Run whatnext once for onboarding, or export TMDB_API_KEY, then: whatnext refresh"))
@@ -393,7 +393,7 @@ func cmdDoctor(_ []string) {
 
 	// 3. TMDb reachability + key validity.
 	if key != "" {
-		client, _ := tmdb.New(key)
+		client, _ := enrich.NewClient(key)
 		lat, herr := client.Health()
 		switch {
 		case herr == nil:
@@ -454,13 +454,11 @@ func warnln(label, detail string) {
 	fmt.Printf("  %s %-12s %s\n", c(aAmber, "⚠"), label, c(aAmber, detail))
 }
 
-// isBlockPage reports whether the resolved IPs look like an ISP DNS-hijack
+// isBlockPage reports whether any resolved IP looks like an ISP DNS-hijack
 // block page rather than TMDb's real CloudFront addresses.
 func isBlockPage(ips []string) bool {
 	for _, ip := range ips {
-		// Real TMDb is CloudFront (3.x / 13.x / 18.x …). Indian ISP block
-		// pages land on 49.44.x.x and similar single-host ranges.
-		if strings.HasPrefix(ip, "49.44.") || strings.HasPrefix(ip, "49.45.") {
+		if tmdb.IsBlockPage(ip) {
 			return true
 		}
 	}
@@ -469,6 +467,9 @@ func isBlockPage(ips []string) bool {
 
 func shortDoctorErr(err error) string {
 	s := err.Error()
+	if strings.Contains(s, "connection reset") {
+		return "connections keep getting reset (flaky ISP route to TMDb's CDN — try another network)"
+	}
 	if strings.Contains(s, "timeout") || strings.Contains(s, "deadline") {
 		return "connection timed out (DNS block or offline?)"
 	}

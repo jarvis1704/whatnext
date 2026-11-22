@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/jarvis1704/whatnext/internal/enrich"
 	"github.com/jarvis1704/whatnext/internal/store"
-	"github.com/jarvis1704/whatnext/internal/tmdb"
 )
 
 // ---- step 1: TMDb API key ----
@@ -41,7 +41,7 @@ func (m *model) saveKey(k string) {
 	cfg, _ := store.LoadConfig()
 	cfg.TMDbKey = k
 	_ = cfg.Save()
-	if client, err := tmdb.New(store.ResolveKey()); err == nil {
+	if client, err := enrich.NewClient(store.ResolveKey()); err == nil {
 		m.tmdb, m.tmdbErr = client, nil
 	} else {
 		m.tmdb, m.tmdbErr = nil, err
