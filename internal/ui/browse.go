@@ -302,6 +302,9 @@ func (m model) browseRow(idx int, selected bool) string {
 		if t.RuntimeMins > 0 {
 			meta += fmt.Sprintf(" · %dm", t.RuntimeMins)
 		}
+		if t.Seasons > 0 {
+			meta += fmt.Sprintf(" · %dS", t.Seasons)
+		}
 		if t.VoteAverage > 0 {
 			meta += fmt.Sprintf(" · ★%.1f", t.VoteAverage)
 		}

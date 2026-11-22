@@ -1,6 +1,7 @@
 package pick
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -136,5 +137,39 @@ func TestDoubleFeatureNoFit(t *testing.T) {
 	}
 	if _, _, ok := DoubleFeature(titles, 50); ok {
 		t.Fatal("DoubleFeature should report ok=false when no pair fits the budget")
+	}
+}
+
+func TestCandidatesCommitmentFilters(t *testing.T) {
+	titles := []store.Title{
+		{Name: "Movie", MediaType: "movie", Enriched: true, RuntimeMins: 120},
+		{Name: "Mini", MediaType: "tv", Enriched: true, RuntimeMins: 60, Seasons: 1, Episodes: 6, TVStatus: "Ended", TVType: "Miniseries"},
+		{Name: "Long ended", MediaType: "tv", Enriched: true, RuntimeMins: 45, Seasons: 7, Episodes: 90, TVStatus: "Ended"},
+		{Name: "Running", MediaType: "tv", Enriched: true, RuntimeMins: 50, Seasons: 2, Episodes: 18, TVStatus: "Returning Series"},
+		{Name: "Unknown show", MediaType: "tv", Enriched: true, RuntimeMins: 30},
+	}
+	names := func(ts []store.Title) []string {
+		var out []string
+		for _, t := range ts {
+			out = append(out, t.Name)
+		}
+		return out
+	}
+	cases := []struct {
+		f    Filter
+		want []string
+	}{
+		{Filter{FinishedOnly: true}, []string{"Movie", "Mini", "Long ended"}},
+		{Filter{MaxSeasons: 2}, []string{"Movie", "Mini", "Running"}},
+		{Filter{Miniseries: true}, []string{"Mini"}},
+		{Filter{MaxTotalMins: 600}, []string{"Movie", "Mini"}},
+		// MaxRuntime is per sitting: an episode for shows.
+		{Filter{MaxRuntime: 50, MediaType: "tv"}, []string{"Long ended", "Running", "Unknown show"}},
+	}
+	for _, c := range cases {
+		got := names(Candidates(titles, c.f))
+		if strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("Candidates(%+v) = %v, want %v", c.f, got, c.want)
+		}
 	}
 }

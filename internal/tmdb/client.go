@@ -5,6 +5,7 @@ package tmdb
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -13,7 +14,8 @@ import (
 	"time"
 )
 
-const base = "https://api.themoviedb.org/3"
+// DefaultBaseURL is the public TMDb v3 API root.
+const DefaultBaseURL = "https://api.themoviedb.org/3"
 
 // ErrNoKey is returned when TMDB_API_KEY is unset.
 var ErrNoKey = fmt.Errorf("TMDB_API_KEY is not set")
@@ -21,6 +23,7 @@ var ErrNoKey = fmt.Errorf("TMDB_API_KEY is not set")
 // Client talks to TMDb using a v3 API key.
 type Client struct {
 	key  string
+	base string // API root; DefaultBaseURL outside tests
 	http *http.Client
 }
 
@@ -31,6 +34,7 @@ func New(key string) (*Client, error) {
 	}
 	return &Client{
 		key:  key,
+		base: DefaultBaseURL,
 		http: &http.Client{Timeout: 15 * time.Second},
 	}, nil
 }
@@ -43,9 +47,9 @@ var ErrBadKey = fmt.Errorf("TMDb rejected the API key (401)")
 func (c *Client) Health() (time.Duration, error) {
 	q := url.Values{"api_key": {c.key}}
 	start := time.Now()
-	resp, err := c.http.Get(base + "/configuration?" + q.Encode())
+	resp, err := c.http.Get(c.base + "/configuration?" + q.Encode())
 	if err != nil {
-		return 0, err
+		return 0, redact("/configuration", err)
 	}
 	defer resp.Body.Close()
 	lat := time.Since(start)
@@ -72,6 +76,12 @@ type Result struct {
 	Cast     []string // top-billed cast, in credited order
 	Language string   // friendly name of the original_language code
 	Country  string   // joined production country names
+
+	// TV-only commitment data; zero for movies.
+	Seasons  int    // number_of_seasons
+	Episodes int    // number_of_episodes
+	TVStatus string // "Returning Series" | "Ended" | "Canceled" | "In Production" | …
+	TVType   string // "Scripted" | "Miniseries" | "Documentary" | "Reality" | …
 }
 
 type searchResp struct {
@@ -95,6 +105,18 @@ type detailResp struct {
 	CreatedBy []struct { // tv only
 		Name string `json:"name"`
 	} `json:"created_by"`
+	NumberOfSeasons  int    `json:"number_of_seasons"`  // tv only
+	NumberOfEpisodes int    `json:"number_of_episodes"` // tv only
+	Status           string `json:"status"`
+	Type             string `json:"type"` // tv only
+	LastEpisode      *struct {
+		Runtime int `json:"runtime"`
+	} `json:"last_episode_to_air"` // tv only
+	Season1 *struct {
+		Episodes []struct {
+			Runtime int `json:"runtime"`
+		} `json:"episodes"`
+	} `json:"season/1"` // tv only, via append_to_response=season/1
 	Credits struct {
 		Cast []struct {
 			Name string `json:"name"`
@@ -181,13 +203,10 @@ func (c *Client) movieDetails(id int) (Result, bool, error) {
 
 func (c *Client) tvDetails(id int) (Result, bool, error) {
 	var dr detailResp
-	if err := c.get(fmt.Sprintf("/tv/%d", id), url.Values{"append_to_response": {"credits"}}, &dr); err != nil {
+	if err := c.get(fmt.Sprintf("/tv/%d", id), url.Values{"append_to_response": {"credits,season/1"}}, &dr); err != nil {
 		return Result{}, false, err
 	}
-	rt := 0
-	if len(dr.EpisodeRuntimes) > 0 {
-		rt = dr.EpisodeRuntimes[0]
-	}
+	rt := episodeRuntime(dr)
 	return Result{
 		TMDbID:      id,
 		MediaType:   "tv",
@@ -199,7 +218,168 @@ func (c *Client) tvDetails(id int) (Result, bool, error) {
 		Cast:        topCast(dr),
 		Language:    languageName(dr.OriginalLanguage),
 		Country:     countryNames(dr),
+		Seasons:     dr.NumberOfSeasons,
+		Episodes:    dr.NumberOfEpisodes,
+		TVStatus:    dr.Status,
+		TVType:      dr.Type,
 	}, true, nil
+}
+
+// Details fetches full metadata for a known TMDb ID. mediaType is "movie"
+// or "tv".
+func (c *Client) Details(mediaType string, id int) (Result, error) {
+	var (
+		r   Result
+		err error
+	)
+	switch mediaType {
+	case "movie":
+		r, _, err = c.movieDetails(id)
+	case "tv":
+		r, _, err = c.tvDetails(id)
+	default:
+		return Result{}, fmt.Errorf("unknown media type %q", mediaType)
+	}
+	return r, err
+}
+
+// SearchHit is one candidate from a free-text TMDb search.
+type SearchHit struct {
+	TMDbID     int
+	MediaType  string // "movie" | "tv"
+	Name       string
+	Year       string // release / first-air year, "" if unknown
+	Overview   string
+	Popularity float64
+}
+
+// maxHits caps how many search results are returned.
+const maxHits = 10
+
+type multiResp struct {
+	Results []struct {
+		ID           int     `json:"id"`
+		MediaType    string  `json:"media_type"` // multi only
+		Title        string  `json:"title"`      // movie
+		Name         string  `json:"name"`       // tv
+		ReleaseDate  string  `json:"release_date"`
+		FirstAirDate string  `json:"first_air_date"`
+		Overview     string  `json:"overview"`
+		Popularity   float64 `json:"popularity"`
+	} `json:"results"`
+}
+
+// Search runs a free-text search. mediaType "movie" or "tv" restricts the
+// search to that kind; "" searches both (people are dropped). Results keep
+// TMDb's relevance order. A trailing year ("shogun 2024") is split off and
+// used to prefer hits from that year, since TMDb doesn't parse it.
+func (c *Client) Search(query, mediaType string) ([]SearchHit, error) {
+	name, year := SplitYear(query)
+	hits, err := c.search(name, mediaType)
+	if err != nil || year == "" {
+		return hits, err
+	}
+	var same []SearchHit
+	for _, h := range hits {
+		if h.Year == year {
+			same = append(same, h)
+		}
+	}
+	if len(same) == 0 {
+		return hits, nil
+	}
+	return same, nil
+}
+
+// SplitYear splits a trailing 4-digit year (1880-2099) off a query:
+// "shogun 2024" → ("shogun", "2024"). A query that is only a year (the
+// film "1917") is left whole.
+func SplitYear(query string) (name, year string) {
+	q := strings.TrimSpace(query)
+	i := strings.LastIndexByte(q, ' ')
+	if i < 0 {
+		return q, ""
+	}
+	last := strings.Trim(q[i+1:], "()")
+	if len(last) != 4 || (last[:2] != "18" && last[:2] != "19" && last[:2] != "20") {
+		return q, ""
+	}
+	for _, r := range last {
+		if r < '0' || r > '9' {
+			return q, ""
+		}
+	}
+	if last < "1880" {
+		return q, ""
+	}
+	return strings.TrimSpace(q[:i]), last
+}
+
+func (c *Client) search(query, mediaType string) ([]SearchHit, error) {
+	path := "/search/multi"
+	switch mediaType {
+	case "movie":
+		path = "/search/movie"
+	case "tv":
+		path = "/search/tv"
+	case "":
+	default:
+		return nil, fmt.Errorf("unknown media type %q", mediaType)
+	}
+	var mr multiResp
+	if err := c.get(path, url.Values{"query": {query}}, &mr); err != nil {
+		return nil, err
+	}
+	hits := make([]SearchHit, 0, maxHits)
+	for _, r := range mr.Results {
+		kind := mediaType
+		if kind == "" {
+			kind = r.MediaType
+		}
+		if kind != "movie" && kind != "tv" {
+			continue // a person, or something new TMDb added
+		}
+		h := SearchHit{TMDbID: r.ID, MediaType: kind, Overview: r.Overview, Popularity: r.Popularity}
+		date := r.ReleaseDate
+		h.Name = r.Title
+		if kind == "tv" {
+			h.Name, date = r.Name, r.FirstAirDate
+		}
+		if len(date) >= 4 {
+			h.Year = date[:4]
+		}
+		hits = append(hits, h)
+		if len(hits) == maxHits {
+			break
+		}
+	}
+	return hits, nil
+}
+
+// episodeRuntime picks a typical episode length. episode_run_time is
+// deprecated and empty for most newer shows, so fall back to the median of
+// season 1's episodes (robust to a long pilot or finale), then to the latest
+// aired episode.
+func episodeRuntime(dr detailResp) int {
+	if len(dr.EpisodeRuntimes) > 0 {
+		return dr.EpisodeRuntimes[0]
+	}
+	if dr.Season1 != nil {
+		var rts []int
+		for _, e := range dr.Season1.Episodes {
+			if e.Runtime > 0 {
+				rts = append(rts, e.Runtime)
+			}
+		}
+		if len(rts) > 0 {
+			sort.Ints(rts)
+			return rts[len(rts)/2]
+		}
+	}
+	if dr.LastEpisode != nil {
+		return dr.LastEpisode.Runtime
+	}
+	return 0
 }
 
 type providersResp struct {
@@ -307,6 +487,16 @@ func languageName(code string) string {
 	return strings.ToUpper(code)
 }
 
+// redact strips the request URL — which carries the api_key query param —
+// from a transport error, so the key never reaches logs or the terminal.
+func redact(path string, err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return fmt.Errorf("tmdb %s: %w", path, uerr.Err)
+	}
+	return err
+}
+
 // get issues a GET to base+path with the api_key appended and decodes JSON
 // into out.
 func (c *Client) get(path string, q url.Values, out any) error {
@@ -314,11 +504,11 @@ func (c *Client) get(path string, q url.Values, out any) error {
 		q = url.Values{}
 	}
 	q.Set("api_key", c.key)
-	u := base + path + "?" + q.Encode()
+	u := c.base + path + "?" + q.Encode()
 
 	resp, err := c.http.Get(u)
 	if err != nil {
-		return err
+		return redact(path, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

@@ -6,6 +6,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -33,6 +34,16 @@ type Title struct {
 	Language string   `json:"language,omitempty"`
 	Country  string   `json:"country,omitempty"`
 
+	// TV commitment data (zero for movies). For tv, RuntimeMins is one
+	// episode's length; TotalRuntimeMins estimates the whole show.
+	// TVStatus is TMDb's status ("Ended", "Returning Series", …); an empty
+	// TVStatus on an enriched show means it predates these fields and needs
+	// a details refresh.
+	Seasons  int    `json:"seasons,omitempty"`
+	Episodes int    `json:"episodes,omitempty"`
+	TVStatus string `json:"tv_status,omitempty"`
+	TVType   string `json:"tv_type,omitempty"` // "Scripted", "Miniseries", …
+
 	// AddedAt is when this title entered the whatnext pool, set the moment
 	// Upsert first accepts it. Used by --weighted picks to favor titles
 	// that have sat unwatched the longest.
@@ -43,6 +54,76 @@ type Title struct {
 	// nothing found" — nil/unset ProvidersRegion means "never checked".
 	Providers       []string `json:"providers,omitempty"`
 	ProvidersRegion string   `json:"providers_region,omitempty"`
+}
+
+// IsTV reports whether t is a tv show.
+func (t Title) IsTV() bool { return t.MediaType == "tv" }
+
+// TotalRuntimeMins estimates the time to watch all of t: the runtime for a
+// movie, episodes × episode runtime for a show. 0 means unknown.
+func (t Title) TotalRuntimeMins() int {
+	if t.IsTV() {
+		return t.Episodes * t.RuntimeMins
+	}
+	return t.RuntimeMins
+}
+
+// IsFinished reports whether a show has stopped airing (ended or canceled),
+// i.e. there is a fixed amount of it to watch.
+func (t Title) IsFinished() bool {
+	return t.TVStatus == "Ended" || t.TVStatus == "Canceled"
+}
+
+// IsMiniseries reports whether a show is a limited series: TMDb types it
+// "Miniseries", or it finished after a single season.
+func (t Title) IsMiniseries() bool {
+	return t.IsTV() && (t.TVType == "Miniseries" || (t.Seasons == 1 && t.IsFinished()))
+}
+
+// SeriesSummary describes a show's size for display, e.g.
+// ["3 seasons", "30 eps", "~22h total", "Ended"]. Empty for movies and for
+// shows without season data yet.
+func (t Title) SeriesSummary() []string {
+	if !t.IsTV() || (t.Seasons == 0 && t.TVStatus == "") {
+		return nil
+	}
+	var out []string
+	if t.Seasons > 0 {
+		out = append(out, plural(t.Seasons, "season"))
+	}
+	if t.Episodes > 0 {
+		out = append(out, fmt.Sprintf("%d eps", t.Episodes))
+	}
+	if total := t.TotalRuntimeMins(); total > 0 {
+		if total >= 60 {
+			out = append(out, fmt.Sprintf("~%dh total", (total+30)/60))
+		} else {
+			out = append(out, fmt.Sprintf("~%dm total", total))
+		}
+	}
+	switch {
+	case t.TVType == "Miniseries":
+		out = append(out, "Miniseries")
+	case t.TVStatus == "Returning Series":
+		out = append(out, "Returning")
+	case t.TVStatus != "":
+		out = append(out, t.TVStatus)
+	}
+	return out
+}
+
+func plural(n int, word string) string {
+	if n == 1 {
+		return "1 " + word
+	}
+	return fmt.Sprintf("%d %ss", n, word)
+}
+
+// TMDbKey is the pool key for a title added straight from TMDb rather than a
+// Letterboxd export. It lives in LetterboxdURI so Upsert's dedupe, undo, and
+// mark-watched keep working unchanged.
+func TMDbKey(mediaType string, id int) string {
+	return fmt.Sprintf("tmdb:%s:%d", mediaType, id)
 }
 
 // Data is the on-disk shape of data.json.
@@ -124,20 +205,35 @@ func (d *Data) Save() error {
 	return os.Rename(tmp, path)
 }
 
-// Upsert appends t only if its LetterboxdURI is not already present. It
-// reports whether the title was newly added. This is what makes re-import
-// idempotent: existing enrichment and watched flags are never clobbered.
+// Upsert appends t only if it is not already present — same LetterboxdURI,
+// or same TMDb identity (so adding a title by search never duplicates one
+// imported from Letterboxd). It reports whether the title was newly added.
+// This is what makes re-import idempotent: existing enrichment and watched
+// flags are never clobbered.
 func (d *Data) Upsert(t Title) bool {
-	for i := range d.Titles {
-		if d.Titles[i].LetterboxdURI != "" && d.Titles[i].LetterboxdURI == t.LetterboxdURI {
-			return false
-		}
+	if d.Find(t) >= 0 {
+		return false
 	}
 	if t.AddedAt.IsZero() {
 		t.AddedAt = time.Now()
 	}
 	d.Titles = append(d.Titles, t)
 	return true
+}
+
+// Find returns the index of the pool entry matching t by LetterboxdURI or
+// TMDb identity, or -1.
+func (d *Data) Find(t Title) int {
+	for i := range d.Titles {
+		e := &d.Titles[i]
+		if e.LetterboxdURI != "" && e.LetterboxdURI == t.LetterboxdURI {
+			return i
+		}
+		if t.TMDbID != 0 && e.TMDbID == t.TMDbID && e.MediaType == t.MediaType {
+			return i
+		}
+	}
+	return -1
 }
 
 // UndoRecord captures a title's watched state just before it was changed, so
@@ -203,6 +299,19 @@ func (d *Data) Unenriched() []*Title {
 	for i := range d.Titles {
 		if !d.Titles[i].Enriched {
 			out = append(out, &d.Titles[i])
+		}
+	}
+	return out
+}
+
+// NeedsTVDetails returns enriched shows missing season/episode/status data
+// (enriched before those fields existed).
+func (d *Data) NeedsTVDetails() []*Title {
+	var out []*Title
+	for i := range d.Titles {
+		t := &d.Titles[i]
+		if t.Enriched && t.IsTV() && t.TVStatus == "" {
+			out = append(out, t)
 		}
 	}
 	return out

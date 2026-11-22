@@ -20,6 +20,7 @@ type filterState struct {
 	mediaIdx    int // 0 any, 1 movie, 2 tv
 	runtimeIx   int // index into runtimeCaps
 	providerIdx int // -1 = any provider; else index into m.availableProviders()
+	commitIdx   int // index into commitOpts
 
 	directorInput textinput.Model
 	actorInput    textinput.Model
@@ -28,6 +29,19 @@ type filterState struct {
 
 var runtimeCaps = []int{0, 90, 120, 150, 999}
 var mediaOpts = []string{"any", "movie", "tv"}
+
+// commitOpts are the "how big a commitment" presets. Show-only constraints
+// let movies through (they're finished by nature); miniseries is tv-only.
+var commitOpts = []struct {
+	label string
+	apply func(*pick.Filter)
+}{
+	{"any", func(*pick.Filter) {}},
+	{"finished shows only", func(f *pick.Filter) { f.FinishedOnly = true }},
+	{"miniseries", func(f *pick.Filter) { f.Miniseries = true }},
+	{"≤ 2 seasons", func(f *pick.Filter) { f.MaxSeasons = 2 }},
+	{"≤ 10h total", func(f *pick.Filter) { f.MaxTotalMins = 600 }},
+}
 
 func newFilterState(cfg *mood.Config) filterState {
 	di := textinput.New()
@@ -53,6 +67,7 @@ const (
 	rowMood = iota
 	rowMedia
 	rowRuntime
+	rowCommit
 	rowProvider
 	rowDirector
 	rowActor
@@ -80,6 +95,8 @@ func (m model) updateFilters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter.mediaIdx = (m.filter.mediaIdx + 1) % len(mediaOpts)
 		case rowRuntime:
 			m.filter.runtimeIx = (m.filter.runtimeIx + 1) % len(runtimeCaps)
+		case rowCommit:
+			m.filter.commitIdx = (m.filter.commitIdx + 1) % len(commitOpts)
 		case rowProvider:
 			m.filter.cycleProvider(1, len(m.availableProviders()))
 		case rowDirector:
@@ -96,6 +113,7 @@ func (m model) updateFilters(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		// quick reset
 		m.filter.moodIdx, m.filter.mediaIdx, m.filter.runtimeIx, m.filter.providerIdx = -1, 0, 0, -1
+		m.filter.commitIdx = 0
 		m.filter.directorInput.SetValue("")
 		m.filter.actorInput.SetValue("")
 	}
@@ -183,6 +201,7 @@ func (m model) buildFilter() pick.Filter {
 	if cap := runtimeCaps[m.filter.runtimeIx]; cap > 0 && cap < 999 {
 		f.MaxRuntime = cap
 	}
+	commitOpts[m.filter.commitIdx].apply(&f)
 	if providers := m.availableProviders(); m.filter.providerIdx >= 0 && m.filter.providerIdx < len(providers) {
 		f.Provider = providers[m.filter.providerIdx]
 	}
@@ -219,7 +238,8 @@ func (m model) viewFilters() string {
 	rows := []string{
 		m.filterRow(rowMood, "Mood", moodVal, m.moodChips()),
 		m.filterRow(rowMedia, "Type", mediaOpts[m.filter.mediaIdx], ""),
-		m.filterRow(rowRuntime, "Runtime", runtimeVal, ""),
+		m.filterRow(rowRuntime, "Runtime", runtimeVal, styleSubtle.Render("   per sitting — one episode for a show")),
+		m.filterRow(rowCommit, "Commit", commitOpts[m.filter.commitIdx].label, ""),
 		m.filterRow(rowProvider, "Watch on", providerVal, m.providerChips(providers)),
 		m.filterTextRow(rowDirector, "Director", m.filter.directorInput),
 		m.filterTextRow(rowActor, "Actor", m.filter.actorInput),

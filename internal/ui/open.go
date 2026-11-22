@@ -26,13 +26,17 @@ func openURL(u string) error {
 	return cmd.Start()
 }
 
-// letterboxdURL returns t's Letterboxd page, or "" if the pool entry has no
-// real URI — titles imported from a URI-less CSV row get a synthetic
-// "synthetic:name:year" key (see internal/letterboxd) that must never be
-// handed to a browser.
+// letterboxdURL returns t's Letterboxd page, or "" if there isn't one.
+// Titles imported from a URI-less CSV row get a synthetic
+// "synthetic:name:year" key, and titles added from TMDb a "tmdb:kind:id"
+// key — neither may be handed to a browser. Movies with a TMDb ID fall back
+// to Letterboxd's /tmdb/<id> redirect; Letterboxd doesn't list tv.
 func letterboxdURL(t store.Title) string {
 	if strings.HasPrefix(t.LetterboxdURI, "http://") || strings.HasPrefix(t.LetterboxdURI, "https://") {
 		return t.LetterboxdURI
+	}
+	if t.MediaType == "movie" && t.TMDbID != 0 {
+		return fmt.Sprintf("https://letterboxd.com/tmdb/%d/", t.TMDbID)
 	}
 	return ""
 }

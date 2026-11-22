@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"net"
@@ -53,6 +54,8 @@ func main() {
 	switch args[0] {
 	case "import":
 		cmdImport(args[1:])
+	case "add":
+		cmdAdd(args[1:])
 	case "pick":
 		cmdPick(args[1:])
 	case "minutes":
@@ -90,6 +93,7 @@ func usage() {
 %s
   whatnext                          launch the interactive TUI
   whatnext import <path>            import a Letterboxd .zip or watchlist.csv
+  whatnext add [--tv|--movie] [-y] <name>   search TMDb and add a movie or show
   whatnext pick [flags]             random pick from your unwatched pool
   whatnext minutes <n>              instant pick that fits in n minutes
   whatnext double [n]               two unwatched titles fitting an n-min budget
@@ -106,7 +110,11 @@ func usage() {
   --genre <name>        filter to a single genre
   --mood <name>         filter by mood (cozy, intense, mindbending, …)
   --type <movie|tv>     filter by media type
-  --max-runtime <min>   cap runtime in minutes
+  --max-runtime <min>   cap one sitting: a movie, or one tv episode
+  --max-hours <h>       cap the whole watch (a show counts every episode)
+  --ended               shows must have finished airing (movies pass)
+  --max-seasons <n>     shows with at most n seasons (movies pass)
+  --miniseries          limited series only
   --on <provider>       filter to a streaming provider, e.g. Netflix
   --min-rating <score>  minimum TMDb rating, 0-10
   --director <name>     director/creator filter, substring match
@@ -159,6 +167,127 @@ func cmdImport(args []string) {
 	runEnrichment(data, "enriching")
 }
 
+// ---- add ----
+
+// cmdAdd searches TMDb and adds the chosen movie or show to the pool, fully
+// enriched. This is the way in for tv, which Letterboxd exports rarely carry.
+func cmdAdd(args []string) {
+	fs := flag.NewFlagSet("add", flag.ExitOnError)
+	tv := fs.Bool("tv", false, "search tv shows only")
+	movie := fs.Bool("movie", false, "search movies only")
+	yes := fs.Bool("y", false, "add the top result without asking")
+	fs.Parse(flagsFirst(args, "tv", "movie", "y"))
+	query := strings.TrimSpace(strings.Join(fs.Args(), " "))
+	if query == "" {
+		fail(fmt.Errorf("usage: whatnext add [--tv|--movie] [-y] <name>"))
+	}
+	kind := ""
+	switch {
+	case *tv && *movie:
+		fail(fmt.Errorf("pick one of --tv or --movie"))
+	case *tv:
+		kind = "tv"
+	case *movie:
+		kind = "movie"
+	}
+
+	client, err := tmdb.New(store.ResolveKey())
+	if err != nil {
+		fail(fmt.Errorf("adding needs a TMDb API key — run whatnext once for onboarding, or export TMDB_API_KEY"))
+	}
+	hits, err := client.Search(query, kind)
+	if err != nil {
+		fail(err)
+	}
+	if len(hits) == 0 {
+		fmt.Println(c(aAmber, fmt.Sprintf("No TMDb results for %q.", query)))
+		os.Exit(1)
+	}
+
+	choice := 0
+	if !*yes && len(hits) > 1 {
+		for i, h := range hits {
+			fmt.Printf("  %s %s %s%s\n",
+				c(aGold, fmt.Sprintf("%2d", i+1)),
+				mediaBadge(h.MediaType),
+				c(aBold, h.Name),
+				c(aDim, yearSuffix(h.Year)))
+			if h.Overview != "" {
+				fmt.Printf("        %s\n", c(aDim, truncateStr(h.Overview, 70)))
+			}
+		}
+		fmt.Printf("Add which? [1-%d, enter = 1, q = cancel] ", len(hits))
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		line = strings.TrimSpace(line)
+		switch {
+		case line == "":
+		case strings.EqualFold(line, "q"):
+			fmt.Println(c(aDim, "Cancelled."))
+			return
+		default:
+			n, err := strconv.Atoi(line)
+			if err != nil || n < 1 || n > len(hits) {
+				fail(fmt.Errorf("expected a number from 1 to %d, got %q", len(hits), line))
+			}
+			choice = n - 1
+		}
+	}
+	hit := hits[choice]
+
+	data, err := store.Load()
+	if err != nil {
+		fail(err)
+	}
+	probe := store.Title{TMDbID: hit.TMDbID, MediaType: hit.MediaType, LetterboxdURI: store.TMDbKey(hit.MediaType, hit.TMDbID)}
+	if i := data.Find(probe); i >= 0 {
+		fmt.Printf("%s Already in your pool: %s\n", c(aAmber, "•"), c(aBold, data.Titles[i].Name))
+		return
+	}
+	t, err := enrich.FromTMDb(client, hit, store.ResolveRegion())
+	if err != nil {
+		fail(err)
+	}
+	data.Upsert(t)
+	if err := data.Save(); err != nil {
+		fail(err)
+	}
+	fmt.Printf("%s Added to pool:\n", c(aGreen, "✓"))
+	printPick(t)
+}
+
+// flagsFirst moves the named boolean flags to the front so they work after
+// the free-text query too ("whatnext add severance --tv"); the flag package
+// otherwise stops parsing at the first non-flag argument.
+func flagsFirst(args []string, names ...string) []string {
+	known := map[string]bool{}
+	for _, n := range names {
+		known["-"+n], known["--"+n] = true, true
+	}
+	var flags, rest []string
+	for _, a := range args {
+		if known[a] {
+			flags = append(flags, a)
+		} else {
+			rest = append(rest, a)
+		}
+	}
+	return append(flags, rest...)
+}
+
+func mediaBadge(kind string) string {
+	if kind == "tv" {
+		return c(aViolet, "[tv]   ")
+	}
+	return c(aCyanBar(), "[movie]")
+}
+
+func yearSuffix(y string) string {
+	if y == "" {
+		return ""
+	}
+	return " (" + y + ")"
+}
+
 // ---- refresh ----
 
 func cmdRefresh(args []string) {
@@ -197,23 +326,7 @@ func runEnrichment(data *store.Data, verb string) {
 			errs++
 		case r.Found:
 			found++
-			if !r.ProvidersOnly {
-				t.TMDbID = r.Lookup.TMDbID
-				t.MediaType = r.Lookup.MediaType
-				t.Genres = r.Lookup.Genres
-				t.RuntimeMins = r.Lookup.RuntimeMins
-				t.VoteAverage = r.Lookup.VoteAverage
-				t.Popularity = r.Lookup.Popularity
-				t.Director = r.Lookup.Director
-				t.Cast = r.Lookup.Cast
-				t.Language = r.Lookup.Language
-				t.Country = r.Lookup.Country
-				t.Enriched = true
-			}
-			if r.ProvidersErr == nil {
-				t.Providers = r.Providers
-				t.ProvidersRegion = region
-			}
+			enrich.Apply(t, r, region)
 		default:
 			missed++
 		}
@@ -378,6 +491,10 @@ func cmdPick(args []string) {
 	director := fs.String("director", "", "director/creator filter (substring match)")
 	actor := fs.String("actor", "", "cast member filter (substring match)")
 	weighted := fs.Bool("weighted", false, "favor titles that have sat unwatched the longest")
+	maxHours := fs.Float64("max-hours", 0, "cap the whole watch in hours (all episodes for a show)")
+	ended := fs.Bool("ended", false, "shows must have finished airing")
+	maxSeasons := fs.Int("max-seasons", 0, "shows with at most n seasons")
+	miniseries := fs.Bool("miniseries", false, "limited series only")
 	fs.Parse(args)
 
 	data, err := store.Load()
@@ -387,6 +504,8 @@ func cmdPick(args []string) {
 	f := pick.Filter{
 		Genre: *genre, MediaType: *mediaType, MaxRuntime: *maxRuntime, Provider: *provider,
 		MinRating: *minRating, Director: *director, Actor: *actor,
+		MaxTotalMins: int(*maxHours * 60), FinishedOnly: *ended, MaxSeasons: *maxSeasons,
+		Miniseries: *miniseries,
 	}
 	if *moodName != "" {
 		cfg, err := mood.Load()
@@ -423,18 +542,33 @@ func printPick(t store.Title) {
 		meta = append(meta, strings.Join(t.Genres, ", "))
 	}
 	if t.RuntimeMins > 0 {
-		meta = append(meta, fmt.Sprintf("%d min", t.RuntimeMins))
+		if t.IsTV() {
+			meta = append(meta, fmt.Sprintf("%d min/ep", t.RuntimeMins))
+		} else {
+			meta = append(meta, fmt.Sprintf("%d min", t.RuntimeMins))
+		}
+	}
+	if series := t.SeriesSummary(); len(series) > 0 {
+		meta = append(meta, strings.Join(series, " · "))
 	}
 	if t.VoteAverage > 0 {
 		meta = append(meta, fmt.Sprintf("★ %.1f", t.VoteAverage))
 	}
 	if t.Director != "" {
-		meta = append(meta, "dir. "+t.Director)
+		if t.IsTV() {
+			meta = append(meta, "created by "+t.Director)
+		} else {
+			meta = append(meta, "dir. "+t.Director)
+		}
 	}
 	if len(t.Providers) > 0 {
 		meta = append(meta, "streaming on "+strings.Join(t.Providers, ", "))
 	}
-	line := fmt.Sprintf("🎬 %s", c(aBold+aGold, t.Name))
+	icon := "🎬"
+	if t.IsTV() {
+		icon = "📺"
+	}
+	line := fmt.Sprintf("%s %s", icon, c(aBold+aGold, t.Name))
 	if t.Year != "" {
 		line += c(aDim, " ("+t.Year+")")
 	}
@@ -548,6 +682,9 @@ func cmdList(args []string) {
 			meta = c(aDim, "  "+strings.Join(t.Genres, ", "))
 			if t.RuntimeMins > 0 {
 				meta += c(aDim, fmt.Sprintf(" · %dm", t.RuntimeMins))
+			}
+			if t.Seasons > 0 {
+				meta += c(aDim, fmt.Sprintf(" · %dS", t.Seasons))
 			}
 			if t.VoteAverage > 0 {
 				meta += c(aDim, fmt.Sprintf(" · ★%.1f", t.VoteAverage))

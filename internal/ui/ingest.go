@@ -180,28 +180,11 @@ func (m model) updateEnrichResult(msg enrichResultMsg) (tea.Model, tea.Cmd) {
 		m.prog.errs++
 		m.pushLog(styleBad.Render("✗ ") + t.Name + styleSubtle.Render("  "+shortErr(r.Err)))
 	case r.Found && !r.ProvidersOnly:
-		t.TMDbID = r.Lookup.TMDbID
-		t.MediaType = r.Lookup.MediaType
-		t.Genres = r.Lookup.Genres
-		t.RuntimeMins = r.Lookup.RuntimeMins
-		t.VoteAverage = r.Lookup.VoteAverage
-		t.Popularity = r.Lookup.Popularity
-		t.Director = r.Lookup.Director
-		t.Cast = r.Lookup.Cast
-		t.Language = r.Lookup.Language
-		t.Country = r.Lookup.Country
-		t.Enriched = true
-		if r.ProvidersErr == nil {
-			t.Providers = r.Providers
-			t.ProvidersRegion = m.region
-		}
+		enrich.Apply(t, r, m.region)
 		m.prog.found++
 		m.pushLog(styleGood.Render("✓ ") + t.Name + styleSubtle.Render("  "+strings.Join(t.Genres, ", ")))
 	case r.Found: // already enriched — this was purely a provider-region refresh
-		if r.ProvidersErr == nil {
-			t.Providers = r.Providers
-			t.ProvidersRegion = m.region
-		}
+		enrich.Apply(t, r, m.region)
 		m.prog.found++
 		where := "no streaming providers found"
 		if len(r.Providers) > 0 {

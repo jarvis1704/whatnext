@@ -40,8 +40,12 @@ type Job struct {
 	// ProvidersOnly marks a title that's already enriched and only needs a
 	// watch-provider refresh for a new region.
 	ProvidersOnly bool
-	MediaType     string // valid when ProvidersOnly
-	TMDbID        int    // valid when ProvidersOnly
+	// DetailsOnly marks an enriched title whose TMDb identity is known but
+	// whose details need re-fetching (shows enriched before season/episode/
+	// status data existed). Skips search; also refreshes providers.
+	DetailsOnly bool
+	MediaType   string // valid when ProvidersOnly or DetailsOnly
+	TMDbID      int    // valid when ProvidersOnly or DetailsOnly
 }
 
 // Result is the outcome of one Job.
@@ -58,8 +62,9 @@ type Result struct {
 	ProvidersErr error    // non-nil: leave the title's cached providers untouched
 }
 
-// Jobs builds the work list from a pool: every unenriched title, plus any
-// already-enriched title whose cached watch-providers are stale for region.
+// Jobs builds the work list from a pool: every unenriched title, every show
+// missing season/status data, plus any already-enriched title whose cached
+// watch-providers are stale for region.
 func Jobs(d *store.Data, region string) []Job {
 	var jobs []Job
 	for i := range d.Titles {
@@ -67,6 +72,8 @@ func Jobs(d *store.Data, region string) []Job {
 		switch {
 		case !t.Enriched:
 			jobs = append(jobs, Job{ID: i, Name: t.Name, Year: t.Year})
+		case t.IsTV() && t.TVStatus == "" && t.TMDbID != 0:
+			jobs = append(jobs, Job{ID: i, Name: t.Name, Year: t.Year, DetailsOnly: true, MediaType: t.MediaType, TMDbID: t.TMDbID})
 		case t.ProvidersRegion != region:
 			jobs = append(jobs, Job{ID: i, ProvidersOnly: true, MediaType: t.MediaType, TMDbID: t.TMDbID})
 		}
@@ -139,7 +146,16 @@ func runJob(j Job, c *tmdb.Client, region string, cache *Cache, tokens <-chan st
 
 	var res tmdb.Result
 	var found bool
-	if e, hit := cache.get(j.Name, j.Year); hit {
+	if j.DetailsOnly {
+		<-tokens
+		var err error
+		res, err = c.Details(j.MediaType, j.TMDbID)
+		if err != nil {
+			return Result{ID: j.ID, Err: err}
+		}
+		found = true
+		cache.put(j.Name, j.Year, cacheEntry{Result: res, Found: true})
+	} else if e, hit := cache.get(j.Name, j.Year); hit && !staleEntry(e) {
 		res, found = e.Result, e.Found
 	} else {
 		<-tokens
@@ -159,13 +175,75 @@ func runJob(j Job, c *tmdb.Client, region string, cache *Cache, tokens <-chan st
 	return Result{ID: j.ID, Found: true, Lookup: res, Providers: provs, ProvidersErr: provErr}
 }
 
+// staleEntry reports whether a cached lookup predates fields enrichment now
+// fills — currently tv season/episode/status data.
+func staleEntry(e cacheEntry) bool {
+	return e.Found && e.Result.MediaType == "tv" && e.Result.TVStatus == ""
+}
+
+// Apply writes one Result onto its pool title: the full TMDb metadata for a
+// fresh lookup, and the watch providers whenever they were fetched cleanly.
+// Not-found and errored results leave t untouched.
+func Apply(t *store.Title, r Result, region string) {
+	if r.Err != nil || !r.Found {
+		return
+	}
+	if !r.ProvidersOnly {
+		ApplyLookup(t, r.Lookup)
+	}
+	if r.ProvidersErr == nil {
+		t.Providers = r.Providers
+		t.ProvidersRegion = region
+	}
+}
+
+// ApplyLookup copies TMDb metadata onto t and marks it enriched.
+func ApplyLookup(t *store.Title, l tmdb.Result) {
+	t.TMDbID = l.TMDbID
+	t.MediaType = l.MediaType
+	t.Genres = l.Genres
+	t.RuntimeMins = l.RuntimeMins
+	t.VoteAverage = l.VoteAverage
+	t.Popularity = l.Popularity
+	t.Director = l.Director
+	t.Cast = l.Cast
+	t.Language = l.Language
+	t.Country = l.Country
+	t.Seasons = l.Seasons
+	t.Episodes = l.Episodes
+	t.TVStatus = l.TVStatus
+	t.TVType = l.TVType
+	t.Enriched = true
+}
+
+// FromTMDb builds a fully enriched pool title for a search hit the user
+// chose to add, fetching details and watch providers. A provider failure is
+// not fatal: the title is returned without provider data (refresh retries).
+func FromTMDb(c *tmdb.Client, hit tmdb.SearchHit, region string) (store.Title, error) {
+	res, err := c.Details(hit.MediaType, hit.TMDbID)
+	if err != nil {
+		return store.Title{}, err
+	}
+	t := store.Title{
+		Name:          hit.Name,
+		Year:          hit.Year,
+		LetterboxdURI: store.TMDbKey(hit.MediaType, hit.TMDbID),
+	}
+	ApplyLookup(&t, res)
+	if provs, perr := c.WatchProviders(hit.MediaType, hit.TMDbID, region); perr == nil {
+		t.Providers = provs
+		t.ProvidersRegion = region
+	}
+	return t, nil
+}
+
 // CountUnenriched is a convenience for the UI's summary lines.
 func CountUnenriched(d *store.Data) int {
 	return len(d.Unenriched())
 }
 
-// CountPending is like CountUnenriched but also counts titles whose provider
-// cache needs refreshing for region.
+// CountPending is like CountUnenriched but also counts shows needing a
+// details refresh and titles whose provider cache is stale for region.
 func CountPending(d *store.Data, region string) int {
-	return len(d.Unenriched()) + len(d.NeedsProviders(region))
+	return len(Jobs(d, region))
 }

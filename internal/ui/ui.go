@@ -28,6 +28,7 @@ const (
 	scrDouble
 	scrReveal
 	scrBrowse
+	scrAdd
 	scrImport
 	scrProgress
 	scrStats
@@ -46,6 +47,8 @@ func (m model) isTextEntry() bool {
 		return true
 	case scrBrowse:
 		return m.browse.filtering || m.browse.openMenu
+	case scrAdd:
+		return m.add.phase == addEntry
 	case scrReveal:
 		return m.reveal.openMenu
 	case scrDouble:
@@ -102,6 +105,9 @@ type model struct {
 
 	// browse
 	browse browseState
+
+	// add (TMDb search → pool)
+	add addState
 
 	// onboarding + import
 	onboarding  bool
@@ -253,6 +259,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.afterParse(msg)
 	case enrichResultMsg:
 		return m.updateEnrichResult(msg)
+	case addSearchMsg:
+		return m.afterAddSearch(msg)
+	case addDoneMsg:
+		return m.afterAddDone(msg)
 	}
 	return m, nil
 }
@@ -272,6 +282,8 @@ func (m model) updateScreen(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateReveal(msg)
 	case scrBrowse:
 		return m.updateBrowse(msg)
+	case scrAdd:
+		return m.updateAdd(msg)
 	case scrImport:
 		return m.updateImport(msg)
 	case scrProgress:
@@ -326,6 +338,8 @@ func (m model) View() string {
 		body = m.viewReveal()
 	case scrBrowse:
 		body = m.viewBrowse()
+	case scrAdd:
+		body = m.viewAdd()
 	case scrImport:
 		body = m.viewImport()
 	case scrProgress:

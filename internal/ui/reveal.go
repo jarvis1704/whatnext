@@ -227,14 +227,21 @@ func (m model) viewLanded() string {
 	var meta string
 	if t.Enriched {
 		bits := []string{}
-		if t.MediaType != "" {
-			bits = append(bits, strings.ToUpper(t.MediaType[:1])+t.MediaType[1:])
+		switch t.MediaType {
+		case "tv":
+			bits = append(bits, "TV")
+		case "movie":
+			bits = append(bits, "Movie")
 		}
 		if len(t.Genres) > 0 {
 			bits = append(bits, strings.Join(t.Genres, ", "))
 		}
 		if t.RuntimeMins > 0 {
-			bits = append(bits, fmt.Sprintf("%d min", t.RuntimeMins))
+			if t.IsTV() {
+				bits = append(bits, fmt.Sprintf("%d min/ep", t.RuntimeMins))
+			} else {
+				bits = append(bits, fmt.Sprintf("%d min", t.RuntimeMins))
+			}
 		}
 		meta = lipgloss.NewStyle().Foreground(dimColor(hex("#E5E7EB"), 0.2+(1-fade)*0.6)).
 			Render(strings.Join(bits, "  ·  "))
@@ -242,11 +249,21 @@ func (m model) viewLanded() string {
 		meta = styleSubtle.Render("not yet enriched — no genre/runtime data")
 	}
 
+	var series string
+	if s := t.SeriesSummary(); len(s) > 0 {
+		series = lipgloss.NewStyle().Foreground(dimColor(hex(string(cViolet)), 1-fade)).
+			Render("🎞  " + strings.Join(s, "  ·  "))
+	}
+
 	var crew string
 	if t.Enriched && (t.Director != "" || len(t.Cast) > 0) {
 		var bits []string
 		if t.Director != "" {
-			bits = append(bits, "Dir. "+t.Director)
+			if t.IsTV() {
+				bits = append(bits, "Created by "+t.Director)
+			} else {
+				bits = append(bits, "Dir. "+t.Director)
+			}
 		}
 		if len(t.Cast) > 0 {
 			bits = append(bits, "Starring "+strings.Join(t.Cast, ", "))
@@ -276,6 +293,9 @@ func (m model) viewLanded() string {
 	marquee := gradientText("🎬  Tonight's pick", float64(m.frame)/24.0, true)
 
 	cardBlocks := []string{marquee, "", titleLine, meta}
+	if series != "" {
+		cardBlocks = append(cardBlocks, series)
+	}
 	if crew != "" {
 		cardBlocks = append(cardBlocks, crew)
 	}

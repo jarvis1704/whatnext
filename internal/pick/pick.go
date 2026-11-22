@@ -16,17 +16,27 @@ type Filter struct {
 	Genre      string   // single genre name (case-insensitive)
 	MoodGenres []string // any-of genre set expanded from a mood
 	MediaType  string   // "movie" | "tv"
-	MaxRuntime int      // minutes; 0 = no cap
+	MaxRuntime int      // minutes per sitting (a movie, or one tv episode); 0 = no cap
 	Provider   string   // streaming provider name (case-insensitive), e.g. "Netflix"
 	MinRating  float64  // minimum TMDb vote average (0-10); 0 = no floor
 	Director   string   // substring match against the director/creator (case-insensitive)
 	Actor      string   // substring match against any top-billed cast member (case-insensitive)
+
+	// Commitment filters. MaxTotalMins caps the whole watch (a movie's
+	// runtime, or all of a show's episodes). FinishedOnly and MaxSeasons
+	// constrain shows only — movies pass, being finished by nature.
+	// Miniseries restricts the pool to limited series.
+	MaxTotalMins int
+	FinishedOnly bool
+	MaxSeasons   int
+	Miniseries   bool
 }
 
 // Active reports whether any constraint is set.
 func (f Filter) Active() bool {
 	return f.Genre != "" || len(f.MoodGenres) > 0 || f.MediaType != "" || f.MaxRuntime > 0 ||
-		f.Provider != "" || f.MinRating > 0 || f.Director != "" || f.Actor != ""
+		f.Provider != "" || f.MinRating > 0 || f.Director != "" || f.Actor != "" ||
+		f.MaxTotalMins > 0 || f.FinishedOnly || f.MaxSeasons > 0 || f.Miniseries
 }
 
 // Candidates returns every unwatched title matching f. When a genre or mood
@@ -54,6 +64,23 @@ func matches(t store.Title, f Filter) bool {
 		if t.RuntimeMins == 0 || t.RuntimeMins > f.MaxRuntime {
 			return false
 		}
+	}
+	if f.MaxTotalMins > 0 {
+		if total := t.TotalRuntimeMins(); total == 0 || total > f.MaxTotalMins {
+			return false
+		}
+	}
+	if t.IsTV() {
+		if f.FinishedOnly && !t.IsFinished() {
+			return false
+		}
+		// Unknown season count (0) fails an explicit cap, like runtime.
+		if f.MaxSeasons > 0 && (t.Seasons == 0 || t.Seasons > f.MaxSeasons) {
+			return false
+		}
+	}
+	if f.Miniseries && !t.IsMiniseries() {
+		return false
 	}
 	if f.Genre != "" {
 		if !t.Enriched || !hasGenre(t.Genres, f.Genre) {
